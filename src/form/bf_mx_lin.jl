@@ -9,15 +9,14 @@ end
 
 ""
 function variable_tp_voltage_prod_hermitian(pm::GenericPowerModel{T}; n_cond::Int=3, nw::Int=pm.cnw, bounded = true) where T <: LPdiagUBFForm
-    n_diag_el = n_cond
-    n_lower_triangle_el = Int((n_cond^2 - n_cond)/2)
-    for c in 1:n_diag_el
+    for c in 1:n_cond
         PowerModels.variable_voltage_magnitude_sqr(pm, nw=nw, cnd=c)
     end
     #Store dictionary with matrix variables by bus
     w_re_dict = Dict{Int64, Any}()
+    w_im_dict = Dict{Int64, Any}()
     for i in ids(pm, nw, :bus)
-        w =  [var(pm, nw, h, :w,  i) for h in 1:n_diag_el]
+        w =  [var(pm, nw, h, :w,  i) for h in 1:n_cond]
         w_re_dict[i] = w
     end
     var(pm, nw)[:W_re] = w_re_dict
@@ -161,7 +160,7 @@ function constraint_tp_voltage_magnitude_difference(pm::GenericPowerModel{T}, n:
     p_s_fr = p_fr - (w_fr_re*(g_sh_fr)' + w_fr_im*(b_sh_fr)')
     q_s_fr = q_fr - (w_fr_im*(g_sh_fr)' - w_fr_re*(b_sh_fr)')
 
-        #KVL over the line:
+    #Ohm's law over the line:
     @constraint(pm.model, diag(w_to_re)        .==        diag(w_fr_re   - p_s_fr  *r' - q_s_fr*x'        - r*p_s_fr'    - x*q_s_fr'))
 end
 

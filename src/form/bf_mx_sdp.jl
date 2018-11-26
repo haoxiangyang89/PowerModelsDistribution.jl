@@ -15,20 +15,20 @@ function constraint_tp_branch_current(pm::GenericPowerModel{T}, n::Int, i, f_bus
     q_s_fr = q_fr - (w_fr_im*(g_sh_fr)' - w_fr_re*(b_sh_fr)')
 
 
-    mat_real = [
+    mx_real = [
     w_fr_re     p_s_fr  ;
     p_s_fr'    ccm_re  ;
     ]
 
-    mat_imag = [
+    mx_imag = [
     w_fr_im     q_s_fr  ;
     -q_s_fr'    ccm_im  ;
     ]
 
     @SDconstraint(pm.model,
     [
-    mat_real  -mat_imag;
-    mat_imag   mat_real
+    mx_real  -mx_imag;
+    mx_imag   mx_real
     ] >=0)
 
 end

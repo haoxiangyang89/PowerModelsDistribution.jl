@@ -80,6 +80,8 @@ end
 
 ""
 function variable_tp_voltage_prod_hermitian(pm::GenericPowerModel{T}; n_cond::Int=3, nw::Int=pm.cnw, bounded = true) where T <: AbstractUBFForm
+    buses = ref(pm, nw, :bus)
+
     wmaxdict = Dict{Int64, Any}()
     for i in ids(pm, nw, :bus)
         wmaxdict[i] = ref(pm, nw, :bus, i, "vmax").values*ref(pm, nw, :bus, i, "vmax").values'
@@ -142,8 +144,8 @@ function variable_tp_voltage_prod_hermitian(pm::GenericPowerModel{T}; n_cond::In
 
             W_im_dict[i] =
             [0              wi_im[1,2][i]   wi_im[1,3][i];
-            wi_im[1,2][i]   0               wi_im[2,3][i];
-            wi_im[1,3][i]   wi_im[2,3][i]   0]
+            -wi_im[1,2][i]   0               wi_im[2,3][i];
+            -wi_im[1,3][i]   -wi_im[2,3][i]   0]
         elseif n_cond == 4
             W_re_dict[i] =
             [wi_re[1,1][i] wi_re[1,2][i] wi_re[1,3][i] wi_re[1,4][i];
@@ -153,15 +155,17 @@ function variable_tp_voltage_prod_hermitian(pm::GenericPowerModel{T}; n_cond::In
 
             W_im_dict[i] =
             [0              wi_im[1,2][i]   wi_im[1,3][i]   wi_im[1,4][i];
-            wi_im[1,2][i]   0               wi_im[2,3][i]   wi_im[2,4][i];
-            wi_im[1,3][i]   wi_im[2,3][i]   0               wi_im[3,4][i];
-            wi_im[1,4][i]   wi_im[2,4][i]   wi_im[3,4][i]   0]
+            -wi_im[1,2][i]   0               wi_im[2,3][i]   wi_im[2,4][i];
+            -wi_im[1,3][i]   -wi_im[2,3][i]   0               wi_im[3,4][i];
+            -wi_im[1,4][i]   -wi_im[2,4][i]   -wi_im[3,4][i]   0]
         else
             error("this number of conductors is not supported")
         end
 
         for c in conductor_ids(pm)
             var(pm, nw, c)[:w][i] = wi_re[c,c][i]
+            setlowerbound(wi_re[c,c][i], (buses[i]["vmin"][c])^2)
+            setupperbound(wi_re[c,c][i], (buses[i]["vmax"][c])^2)
         end
     end
     var(pm, nw)[:W_re] = W_re_dict
@@ -251,8 +255,8 @@ function variable_tp_branch_series_current_prod_hermitian(pm::GenericPowerModel{
 
             ccm_im_dict[i] =
             [0              ccm_im[1,2][i]   ccm_im[1,3][i];
-            ccm_im[1,2][i]   0               ccm_im[2,3][i];
-            ccm_im[1,3][i]   ccm_im[2,3][i]   0]
+            -ccm_im[1,2][i]   0               ccm_im[2,3][i];
+            -ccm_im[1,3][i]   -ccm_im[2,3][i]   0]
         elseif n_cond == 4
             ccm_re_dict[i] =
             [ccm_re[1,1][i] ccm_re[1,2][i] ccm_re[1,3][i] ccm_re[1,4][i];
@@ -262,9 +266,9 @@ function variable_tp_branch_series_current_prod_hermitian(pm::GenericPowerModel{
 
             ccm_im_dict[i] =
             [0              ccm_im[1,2][i]   ccm_im[1,3][i]   ccm_im[1,4][i];
-            ccm_im[1,2][i]   0               ccm_im[2,3][i]   ccm_im[2,4][i];
-            ccm_im[1,3][i]   ccm_im[2,3][i]   0               ccm_im[3,4][i];
-            ccm_im[1,4][i]   ccm_im[2,4][i]   ccm_im[3,4][i]   0]
+            -ccm_im[1,2][i]   0               ccm_im[2,3][i]   ccm_im[2,4][i];
+            -ccm_im[1,3][i]   -ccm_im[2,3][i]   0               ccm_im[3,4][i];
+            -ccm_im[1,4][i]   -ccm_im[2,4][i]   -ccm_im[3,4][i]   0]
         else
             error("this number of conductors is not supported")
         end

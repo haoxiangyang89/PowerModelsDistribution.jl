@@ -29,7 +29,6 @@ end
         @test isapprox(utrivec, [2, 3, 6])
         ltrivec = TPPMs.mat2ltrivec(A)
         @test isapprox(ltrivec, [4, 7, 8])
-        @test isapprox(A, diagm(diag(A)) + TPPMs.vec2utri(utrivec) + TPPMs.vec2ltri(ltrivec))
     end
     @testset "5x5 matrix" begin
         A = [1 2 3 4 5; 6 7 8 9 10; 11 12 13 14 15; 16 17 18 19 20; 21 22 23 24 25]
@@ -37,27 +36,7 @@ end
         utrivec = TPPMs.mat2utrivec(A)
         @test isapprox(length(utrivec), (n^2-n)/2)
         ltrivec = TPPMs.mat2ltrivec(A)
-        @test isapprox(A, diagm(diag(A)) + TPPMs.vec2utri(utrivec) + TPPMs.vec2ltri(ltrivec))
-    end
-    @testset "3x3 Hermitian matrix" begin
-        A = [1 2 3; 4 5 6; 7 8.0 9]
-        (r, i) = TPPMs.make_hermitian_matrix_variable(diag(A), TPPMs.mat2utrivec(A), TPPMs.mat2utrivec(A))
-        @test size(r) == size(A)
-        @test issymmetric(r)
-        @test ishermitian(r + im*i)
-    end
-
-    @testset "5x5 Hermitian matrix" begin
-        A = [1 2 3 4 5; 6 7 8 9 10; 11 12 13 14 15; 16 17 18 19 20; 21 22 23 24 25]
-        (r, i) = TPPMs.make_hermitian_matrix_variable(diag(A), TPPMs.mat2utrivec(A), TPPMs.mat2utrivec(A))
-        @test size(r) == size(A)
-        @test issymmetric(r)
-        @test ishermitian(r + im*i)
-    end
-
-    @testset "5x5 full matrix" begin
-        A = [1 2 3 4 5; 6 7 8 9 10; 11 12 13 14 15; 16 17 18 19 20; 21 22 23 24 25]
-        B = TPPMs.make_full_matrix_variable(diag(A), TPPMs.mat2ltrivec(A), TPPMs.mat2utrivec(A))
-        @test isapprox(A, B)
+        @test isapprox(utrivec, [2, 3, 8, 4, 9, 14, 5, 10, 15, 20])
+        @test isapprox(ltrivec, [6, 11, 12, 16, 17, 18, 21, 22, 23, 24])
     end
 end

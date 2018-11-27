@@ -623,8 +623,9 @@ function constraint_tp_kcl_shunt_mx(pm::GenericPowerModel{T}, n::Int, i, bus_arc
 
     # @constraint(pm.model, sum(p[a] for a in bus_arcs) .== sum(pg[g] for g in bus_gens) - sum(pd for pd in values(bus_pd)) - sum(gs for gs in values(bus_gs))*w_re)
     # @constraint(pm.model, sum(q[a] for a in bus_arcs) .== sum(qg[g] for g in bus_gens) - sum(qd for qd in values(bus_qd)) + sum(bs for bs in values(bus_bs))*w_re)
-    @constraint(pm.model, sum(p[a] for a in bus_arcs) .== sum(pg[g] for g in bus_gens) - sum(pd[d] for d in bus_loads) - sum(gs for gs in values(bus_gs))*w_re)
-    @constraint(pm.model, sum(q[a] for a in bus_arcs) .== sum(qg[g] for g in bus_gens) - sum(qd[d] for d in bus_loads) + sum(bs for bs in values(bus_bs))*w_re)
+    #TODO add bus shunts and dc lines again
+    @constraint(pm.model, sum(p[a] for a in bus_arcs) .== sum(pg[g] for g in bus_gens) - sum(pd[d] for d in bus_loads))
+    @constraint(pm.model, sum(q[a] for a in bus_arcs) .== sum(qg[g] for g in bus_gens) - sum(qd[d] for d in bus_loads))
 end
 
 

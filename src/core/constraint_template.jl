@@ -41,14 +41,9 @@ function constraint_tp_kcl_shunt_mx(pm::GenericPowerModel, i::Int; nw::Int=pm.cn
     bus_loads = ref(pm, nw, :bus_loads, i)
     bus_shunts = ref(pm, nw, :bus_shunts, i)
 
-    # bus_pd = Dict(k => ref(pm, nw, :load, k, "pd", cnd) for k in bus_loads)
-    # bus_qd = Dict(k => ref(pm, nw, :load, k, "qd", cnd) for k in bus_loads)
 
-    # bus_pd = Dict(k => ref(pm, nw, :load, k, "pd") for k in bus_loads)
-    # bus_qd = Dict(k => ref(pm, nw, :load, k, "qd") for k in bus_loads)
-
-    bus_gs = Dict(k => ref(pm, nw, :shunt, k, "gs", cnd) for k in bus_shunts)
-    bus_bs = Dict(k => ref(pm, nw, :shunt, k, "bs", cnd) for k in bus_shunts)
+    bus_gs = Dict(k => diagm(0 => ref(pm, nw, :shunt, k, "gs")) for k in bus_shunts)
+    bus_bs = Dict(k => diagm(0 => ref(pm, nw, :shunt, k, "bs")) for k in bus_shunts)
 
     constraint_tp_kcl_shunt_mx(pm, nw, i, bus_arcs, bus_arcs_dc, bus_gens, bus_loads, bus_gs, bus_bs)
 end

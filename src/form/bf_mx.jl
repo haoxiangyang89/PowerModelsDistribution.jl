@@ -136,16 +136,7 @@ function variable_tp_voltage_prod_hermitian(pm::GenericPowerModel{T}; n_cond::In
 
     #reshape vectors to matrices
     for i in ids(pm, nw, :bus)
-        if n_cond  == 3
-            W_re_dict[i] = make_3x3_symmetric_matrix(wi_re, i)
-            W_im_dict[i] = make_3x3_skew_symmetric_matrix(wi_im, i)
-        elseif n_cond == 4
-            W_re_dict[i] = make_4x4_symmetric_matrix(wi_re, i)
-            W_im_dict[i] = make_4x4_skew_symmetric_matrix(wi_im, i)
-        else
-            error("this number of conductors is not supported")
-        end
-
+        (W_re_dict[i], W_im_dict[i]) = make_hermitian_matrix(wi_re, wi_im, i, n_cond)
         for c in conductor_ids(pm)
             var(pm, nw, c)[:w][i] = wi_re[c,c][i]
             setlowerbound(wi_re[c,c][i], (buses[i]["vmin"][c])^2)
@@ -154,6 +145,30 @@ function variable_tp_voltage_prod_hermitian(pm::GenericPowerModel{T}; n_cond::In
     end
     var(pm, nw)[:W_re] = W_re_dict
     var(pm, nw)[:W_im] = W_im_dict
+end
+
+function make_hermitian_matrix(a, b, i, n_cond)
+    if n_cond  == 3
+        mx_real = make_3x3_symmetric_matrix(a, i)
+        mx_imag = make_3x3_skew_symmetric_matrix(b, i)
+    elseif n_cond == 4
+        mx_real = make_4x4_symmetric_matrix(a, i)
+        mx_imag = make_4x4_skew_symmetric_matrix(b, i)
+    else
+        error("this number of conductors is not supported")
+    end
+    return (mx_real, mx_imag)
+end
+
+function make_full_matrix(a, i, n_cond)
+    if n_cond  == 3
+        mx = make_3x3_full_matrix(a, i)
+    elseif n_cond == 4
+        mx = make_4x4_full_matrix(a, i)
+    else
+        error("this number of conductors is not supported")
+    end
+    return mx
 end
 
 function make_3x3_symmetric_matrix(a, i)
@@ -273,18 +288,11 @@ function variable_tp_branch_series_current_prod_hermitian(pm::GenericPowerModel{
 
     #reshape vectors to matrices
     for i in ids(pm, nw, :branch)
-        if n_cond  == 3
-            ccm_re_dict[i] = make_3x3_symmetric_matrix(ccm_re, i)
-            ccm_im_dict[i] = make_3x3_skew_symmetric_matrix(ccm_im, i)
-        elseif n_cond == 4
-            ccm_re_dict[i] = make_4x4_symmetric_matrix(ccm_re, i)
-            ccm_im_dict[i] = make_4x4_skew_symmetric_matrix(ccm_im, i)
-        else
-            error("this number of conductors is not supported")
-        end
+        (ccm_re_dict[i], ccm_im_dict[i]) = make_hermitian_matrix(ccm_re, ccm_im, i, n_cond)
 
         for c in conductor_ids(pm)
             var(pm, nw, c)[:cm][i] = ccm_re[c,c][i]
+            setlowerbound(ccm_re[c,c][i], 0)
         end
     end
 
@@ -345,22 +353,12 @@ function variable_tp_branch_flow(pm::GenericPowerModel{T}; n_cond::Int=3, nw::In
     end
 
     for i in ref(pm, nw, :arcs)
-        if n_cond  == 3
-            P = make_3x3_full_matrix(P_mx, i)
-            Q = make_3x3_full_matrix(Q_mx, i)
-        elseif n_cond == 4
-            P = make_4x4_full_matrix(P_mx, i)
-            Q = make_4x4_full_matrix(Q_mx, i)
-        else
-            error("this number of conductors is not supported")
-        end
-
-        p_mx_dict[i] = P
-        q_mx_dict[i] = Q
+        p_mx_dict[i] = make_full_matrix(P_mx, i, n_cond)
+        q_mx_dict[i] = make_full_matrix(Q_mx, i, n_cond)
 
         for c in conductor_ids(pm)
-            var(pm, nw, c)[:p][i] = P[c,c]
-            var(pm, nw, c)[:q][i] = Q[c,c]
+            var(pm, nw, c)[:p][i] = p_mx_dict[i][c,c]
+            var(pm, nw, c)[:q][i] = q_mx_dict[i][c,c]
         end
     end
     var(pm, nw)[:P_mx] = p_mx_dict
@@ -420,22 +418,12 @@ function variable_tp_generation(pm::GenericPowerModel{T}; n_cond::Int=3, nw::Int
     end
 
     for i in ids(pm, nw, :gen)
-        if n_cond  == 3
-            pg = make_3x3_full_matrix(Pg_mx, i)
-            qg = make_3x3_full_matrix(Qg_mx, i)
-        elseif n_cond == 4
-            pg = make_4x4_full_matrix(Pg_mx, i)
-            qg = make_4x4_full_matrix(Qg_mx, i)
-        else
-            error("this number of conductors is not supported")
-        end
-
-        p_mx_dict[i] = pg
-        q_mx_dict[i] = qg
+        p_mx_dict[i] = make_full_matrix(Pg_mx, i, n_cond)
+        q_mx_dict[i] = make_full_matrix(Qg_mx, i, n_cond)
 
         for c in conductor_ids(pm)
-            var(pm, nw, c)[:pg][i] = pg[c,c]
-            var(pm, nw, c)[:qg][i] = qg[c,c]
+            var(pm, nw, c)[:pg][i] = p_mx_dict[i][c,c]
+            var(pm, nw, c)[:qg][i] = q_mx_dict[i][c,c]
         end
     end
     var(pm, nw)[:Pg_mx] = p_mx_dict
@@ -493,28 +481,16 @@ function variable_tp_load(pm::GenericPowerModel{T}; n_cond::Int=3, nw::Int=pm.cn
     end
 
     for i in ids(pm, nw, :load)
-        if n_cond  == 3
-            pd = make_3x3_full_matrix(Pd_mx, i)
-            qd = make_3x3_full_matrix(Qd_mx, i)
-        elseif n_cond == 4
-            pd = make_4x4_full_matrix(Pd_mx, i)
-            qd = make_4x4_full_matrix(Qd_mx, i)
-        else
-            error("this number of conductors is not supported")
-        end
-
-        p_mx_dict[i] = pd
-        q_mx_dict[i] = qd
+        p_mx_dict[i] = make_full_matrix(Pd_mx, i, n_cond)
+        q_mx_dict[i] = make_full_matrix(Qd_mx, i, n_cond)
 
         for c in conductor_ids(pm)
-            var(pm, nw, c)[:pd][i] = pd[c,c]
-            var(pm, nw, c)[:qd][i] = qd[c,c]
-            setlowerbound(pd[c,c], ref(pm, nw, :load)[i]["pd"][c])
-            setupperbound(pd[c,c], ref(pm, nw, :load)[i]["pd"][c])
-            setlowerbound(qd[c,c], ref(pm, nw, :load)[i]["qd"][c])
-            setupperbound(qd[c,c], ref(pm, nw, :load)[i]["qd"][c])
-
-
+            var(pm, nw, c)[:pd][i] = p_mx_dict[i][c,c]
+            var(pm, nw, c)[:qd][i] = q_mx_dict[i][c,c]
+            setlowerbound(p_mx_dict[i][c,c], ref(pm, nw, :load)[i]["pd"][c])
+            setupperbound(p_mx_dict[i][c,c], ref(pm, nw, :load)[i]["pd"][c])
+            setlowerbound(q_mx_dict[i][c,c], ref(pm, nw, :load)[i]["qd"][c])
+            setupperbound(q_mx_dict[i][c,c], ref(pm, nw, :load)[i]["qd"][c])
         end
     end
     var(pm, nw)[:Pd_mx] = p_mx_dict

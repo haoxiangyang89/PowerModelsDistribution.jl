@@ -14,7 +14,6 @@ function variable_tp_voltage_prod_hermitian(pm::GenericPowerModel{T}; n_cond::In
     end
     #Store dictionary with matrix variables by bus
     w_re_dict = Dict{Int64, Any}()
-    w_im_dict = Dict{Int64, Any}()
     for i in ids(pm, nw, :bus)
         w =  [var(pm, nw, h, :w,  i) for h in 1:n_cond]
         w_re_dict[i] = w
@@ -25,10 +24,7 @@ end
 
 ""
 function variable_tp_branch_flow(pm::GenericPowerModel{T}; n_cond::Int=3, nw::Int=pm.cnw, bounded = true) where  T<: LPfullUBFForm
-    n_diag_el = n_cond
-    n_lower_triangle_el = Int((n_cond^2 - n_cond)/2)
-
-    for i in 1:n_diag_el
+    for i in 1:n_cond
         PMs.variable_active_branch_flow(pm, nw=nw, cnd=i, bounded=bounded)
         PMs.variable_reactive_branch_flow(pm, nw=nw, cnd=i, bounded=bounded)
     end
@@ -41,8 +37,8 @@ function variable_tp_branch_flow(pm::GenericPowerModel{T}; n_cond::Int=3, nw::In
         l = i[1]
         f_bus = i[2]
         branch = ref(pm, nw, :branch, l)
-        p_d =  [var(pm, nw, c, :p,    i) for c in 1:n_diag_el]
-        q_d =  [var(pm, nw, c, :q,    i) for c in 1:n_diag_el]
+        p_d =  [var(pm, nw, c, :p,    i) for c in 1:n_cond]
+        q_d =  [var(pm, nw, c, :q,    i) for c in 1:n_cond]
 
         alpha = exp(-im*2*pi/3)
         Gamma = [1 alpha^2 alpha; alpha 1 alpha^2; alpha^2 alpha 1]
@@ -68,9 +64,7 @@ end
 
 ""
 function variable_tp_branch_flow(pm::GenericPowerModel{T}; n_cond::Int=3, nw::Int=pm.cnw, bounded = true) where T<:LPdiagUBFForm
-    n_diag_el = n_cond
-
-    for i in 1:n_diag_el
+    for i in 1:n_cond
         PMs.variable_active_branch_flow(pm, nw=nw, cnd=i, bounded=bounded)
         PMs.variable_reactive_branch_flow(pm, nw=nw, cnd=i, bounded=bounded)
     end
@@ -83,19 +77,21 @@ function variable_tp_branch_flow(pm::GenericPowerModel{T}; n_cond::Int=3, nw::In
         l = i[1]
         f_bus = i[2]
         branch = ref(pm, nw, :branch, l)
-        p_d =  [var(pm, nw, c, :p,    i) for c in 1:n_diag_el]
-        q_d =  [var(pm, nw, c, :q,    i) for c in 1:n_diag_el]
+        p_d =  [var(pm, nw, c, :p,    i) for c in 1:n_cond]
+        q_d =  [var(pm, nw, c, :q,    i) for c in 1:n_cond]
 
         ps_mat = p_d
         qs_mat = q_d
 
-        g_sh_fr = diagm(branch["g_fr"].values)
-        b_sh_fr = diagm(branch["b_fr"].values)
+        g_sh_fr = (branch["g_fr"].values)
+        b_sh_fr = (branch["b_fr"].values)
 
-        w_fr_re = var(pm, nw, :W_re)[f_bus]
+        # w_fr_re = var(pm, nw, :W_re)[f_bus]
 
-        p_mat = ps_mat + diag(( diagm(w_fr_re)*(g_sh_fr)'))
-        q_mat = qs_mat + diag((-diagm(w_fr_re)*(b_sh_fr)'))
+        w_fr_re =  [var(pm, nw, h, :w,  f_bus) for h in 1:n_cond]
+
+        p_mat = ps_mat +  w_fr_re.*g_sh_fr
+        q_mat = qs_mat + -w_fr_re.*b_sh_fr
 
 
         p_mat_dict[i] = p_mat
@@ -194,6 +190,6 @@ function constraint_tp_theta_ref(pm::GenericPowerModel{T}, n::Int, i) where T <:
     nconductors = length(PMs.conductor_ids(pm))
 
     w_re = var(pm, n, :W_re)[i]
-    # balanced fasor
+    # phasor with equal magnitudes in each phase
     @constraint(pm.model, w_re[2:3]   .== w_re[1])
 end

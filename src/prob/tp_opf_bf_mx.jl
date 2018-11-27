@@ -23,10 +23,10 @@ function post_tp_opf_bf_mx(pm::GenericPowerModel)
     variable_tp_load(pm)
 
 
-    for c in PMs.conductor_ids(pm)
-        # PMs.variable_generation(pm, cnd=c)
-        PMs.variable_dcline_flow(pm, cnd=c)
-    end
+    # for c in PMs.conductor_ids(pm)
+    #     # PMs.variable_generation(pm, cnd=c)
+    #     PMs.variable_dcline_flow(pm, cnd=c)
+    # end
 
     # Constraints
     for i in ids(pm, :ref_buses)
@@ -62,9 +62,9 @@ function post_tp_opf_bf_mx(pm::GenericPowerModel)
         end
     end
 
-    for i in ids(pm, :dcline), c in PMs.conductor_ids(pm)
-        PMs.constraint_dcline(pm, i, cnd=c)
-    end
+    # for i in ids(pm, :dcline), c in PMs.conductor_ids(pm)
+    #     PMs.constraint_dcline(pm, i, cnd=c)
+    # end
 
     PMs.objective_min_fuel_cost(pm)
 end

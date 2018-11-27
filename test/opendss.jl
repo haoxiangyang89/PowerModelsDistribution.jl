@@ -28,9 +28,7 @@ TESTLOG = getlogger(PowerModels)
     @testset "simple generator branch load" begin
         setlevel!(TESTLOG, "info")
 
-        @test_warn(TESTLOG, "Not all OpenDSS features are supported, currently only minimal support for \
-                      lines, loads, generators, and capacitors as shunts. Transformers and reactors \
-                      as transformer branches are included, but value translation is not fully supported.",
+        @test_warn(TESTLOG, "Not all OpenDSS features are supported, currently only minimal support for lines, loads, generators, and capacitors as shunts. Transformers and reactors as transformer branches are included, but value translation is not fully supported.",
                       TPPMs.parse_file("../test/data/opendss/test_simple.dss"))
 
         Memento.Test.@test_log(TESTLOG, "info", "Calling parse_dss on ../test/data/opendss/test_simple.dss",
@@ -96,7 +94,8 @@ TESTLOG = getlogger(PowerModels)
         tppm = TPPMs.parse_file("../test/data/opendss/test2_master.dss")
 
         @test tppm["name"] == "test2"
-        @test length(tppm) == 19
+
+        @test length(tppm) == 18
         @test length(dss) == 12
 
         for (key, len) in zip(["bus", "load", "shunt", "branch", "gen", "dcline"], [11, 4, 5, 15, 4, 0])
@@ -121,8 +120,8 @@ TESTLOG = getlogger(PowerModels)
             @test all(isapprox.(tppm["branch"]["$i"]["b_fr"].values, (3.4 * 2.0 + 1.6) / 3.0 * (tppm["basekv"]^2 / tppm["baseMVA"] * 2.0 * pi * 60.0 / 1e9) / 2.0; atol=1e-6))
         end
 
-        @test all(isapprox.(tppm["branch"]["1"]["br_r"].values, diagm(fill(6.3012e-8, 3)); atol=1e-12))
-        @test all(isapprox.(tppm["branch"]["1"]["br_x"].values, diagm(fill(6.3012e-7, 3)); atol=1e-12))
+        @test all(isapprox.(tppm["branch"]["1"]["br_r"].values, diagm(0 => fill(6.30375e-8, 3)); atol=1e-12))
+        @test all(isapprox.(tppm["branch"]["1"]["br_x"].values, diagm(0 => fill(6.30254e-7, 3)); atol=1e-12))
 
         for k in ["qd", "pd"]
             @test all(isapprox.(tppm["load"]["4"][k].values, tppm["load"]["2"][k].values; atol=1e-12))
@@ -270,7 +269,7 @@ TESTLOG = getlogger(PowerModels)
                 for (bus, va, vm) in zip(["1", "2", "3"],
                                          [0.0, deg2rad.([-0.22, -0.11, 0.12]), deg2rad.([-0.48, -0.24, 0.27])],
                                          [0.9959, [0.980937, 0.98936, 0.987039], [0.963546, 0.981757, 0.976779]])
-                    @test all(isapprox.(sol["solution"]["bus"][bus]["va"].values, TPPMs.wraptopi.([2 * pi / tppm["conductors"] * (1 - c) for c in 1:tppm["conductors"]]) + va; atol=deg2rad(0.01)))
+                    @test all(isapprox.(sol["solution"]["bus"][bus]["va"].values, TPPMs.wraptopi.([2 * pi / tppm["conductors"] * (1 - c) for c in 1:tppm["conductors"]]) .+ va; atol=deg2rad(0.01)))
                     @test all(isapprox.(sol["solution"]["bus"][bus]["vm"].values, vm; atol=1e-5))
                 end
 
@@ -298,5 +297,40 @@ TESTLOG = getlogger(PowerModels)
 
         @test sol["status"] == :LocalOptimal
         @test isapprox(sol["objective"], 0.0182769; atol = 1e-4)
+    end
+
+    @testset "3-bus balanced pv" begin
+        setlevel!(TESTLOG, "warn")
+        @test_warn(TESTLOG, "Converting PVSystem \"pv1\" into generator with limits determined by OpenDSS property 'kVA'",
+                   TPPMs.parse_file("../test/data/opendss/case3_balanced_pv.dss"))
+        setlevel!(TESTLOG, "error")
+
+        tppm = TPPMs.parse_file("../test/data/opendss/case3_balanced_pv.dss")
+
+        @test length(tppm["gen"]) == 2
+        @test all(tppm["gen"]["2"]["qmin"] .== -tppm["gen"]["2"]["qmax"])
+        @test all(tppm["gen"]["2"]["pmax"] .== tppm["gen"]["2"]["qmax"])
+        @test all(tppm["gen"]["2"]["pmin"].values .== 0.0)
+
+        sol = TPPMs.run_tp_opf(tppm, PMs.ACPPowerModel, ipopt_solver)
+
+        @test sol["status"] == :LocalOptimal
+        @test sum(sol["solution"]["gen"]["1"]["pg"] * sol["solution"]["baseMVA"]) < 0.0
+        @test sum(sol["solution"]["gen"]["1"]["qg"] * sol["solution"]["baseMVA"]) < 0.0
+        @test isapprox(sum(sol["solution"]["gen"]["2"]["pg"] * sol["solution"]["baseMVA"]), 0.018345; atol=1e-4)
+        @test isapprox(sum(sol["solution"]["gen"]["2"]["qg"] * sol["solution"]["baseMVA"]), 0.00919404; atol=1e-4)
+    end
+
+    @testset "3-bus unbalanced single-phase pv" begin
+        tppm = TPPMs.parse_file("../test/data/opendss/case3_unbalanced_1phase-pv.dss")
+        sol = TPPMs.run_tp_opf(tppm, PMs.ACPPowerModel, ipopt_solver)
+
+        @test sol["status"] == :LocalOptimal
+
+        @test isapprox(sum(sol["solution"]["gen"]["1"]["pg"] * sol["solution"]["baseMVA"]), 0.0196116; atol=1e-3)
+        @test isapprox(sum(sol["solution"]["gen"]["1"]["qg"] * sol["solution"]["baseMVA"]), 0.00923107; atol=1e-3)
+
+        @test all(sol["solution"]["gen"]["2"]["pg"][2:3] .== 0.0)
+        @test all(sol["solution"]["gen"]["2"]["qg"][2:3] .== 0.0)
     end
 end

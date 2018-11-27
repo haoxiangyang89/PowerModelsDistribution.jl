@@ -137,27 +137,11 @@ function variable_tp_voltage_prod_hermitian(pm::GenericPowerModel{T}; n_cond::In
     #reshape vectors to matrices
     for i in ids(pm, nw, :bus)
         if n_cond  == 3
-            W_re_dict[i] =
-            [wi_re[1,1][i] wi_re[1,2][i] wi_re[1,3][i];
-            wi_re[1,2][i] wi_re[2,2][i] wi_re[2,3][i];
-            wi_re[1,3][i] wi_re[2,3][i] wi_re[3,3][i]]
-
-            W_im_dict[i] =
-            [0              wi_im[1,2][i]   wi_im[1,3][i];
-            -wi_im[1,2][i]   0               wi_im[2,3][i];
-            -wi_im[1,3][i]   -wi_im[2,3][i]   0]
+            W_re_dict[i] = make_3x3_symmetric_matrix(wi_re, i)
+            W_im_dict[i] = make_3x3_skew_symmetric_matrix(wi_im, i)
         elseif n_cond == 4
-            W_re_dict[i] =
-            [wi_re[1,1][i] wi_re[1,2][i] wi_re[1,3][i] wi_re[1,4][i];
-            wi_re[1,2][i] wi_re[2,2][i] wi_re[2,3][i] wi_re[2,4][i];
-            wi_re[1,3][i] wi_re[2,3][i] wi_re[3,3][i] wi_re[3,4][i];
-            wi_re[1,4][i] wi_re[2,4][i] wi_re[3,4][i] wi_re[4,4][i]]
-
-            W_im_dict[i] =
-            [0              wi_im[1,2][i]   wi_im[1,3][i]   wi_im[1,4][i];
-            -wi_im[1,2][i]   0               wi_im[2,3][i]   wi_im[2,4][i];
-            -wi_im[1,3][i]   -wi_im[2,3][i]   0               wi_im[3,4][i];
-            -wi_im[1,4][i]   -wi_im[2,4][i]   -wi_im[3,4][i]   0]
+            W_re_dict[i] = make_4x4_symmetric_matrix(wi_re, i)
+            W_im_dict[i] = make_4x4_skew_symmetric_matrix(wi_im, i)
         else
             error("this number of conductors is not supported")
         end
@@ -171,6 +155,48 @@ function variable_tp_voltage_prod_hermitian(pm::GenericPowerModel{T}; n_cond::In
     var(pm, nw)[:W_re] = W_re_dict
     var(pm, nw)[:W_im] = W_im_dict
 end
+
+function make_3x3_symmetric_matrix(a, i)
+    return  [a[1,1][i] a[1,2][i] a[1,3][i];
+                a[1,2][i] a[2,2][i] a[2,3][i];
+                a[1,3][i] a[2,3][i] a[3,3][i]]
+end
+
+function make_3x3_skew_symmetric_matrix(a, i)
+    return [0              a[1,2][i]   a[1,3][i];
+            -a[1,2][i]   0             a[2,3][i];
+            -a[1,3][i]   -a[2,3][i]   0]
+end
+
+function make_4x4_symmetric_matrix(a, i)
+    return      [a[1,1][i] a[1,2][i] a[1,3][i] a[1,4][i];
+                a[1,2][i] a[2,2][i] a[2,3][i] a[2,4][i];
+                a[1,3][i] a[2,3][i] a[3,3][i] a[3,4][i];
+                a[1,4][i] a[2,4][i] a[3,4][i] a[4,4][i]]
+end
+
+function make_4x4_skew_symmetric_matrix(a, i)
+    return   [0              a[1,2][i]   a[1,3][i]   a[1,4][i];
+            -a[1,2][i]   0               a[2,3][i]   a[2,4][i];
+            -a[1,3][i]   -a[2,3][i]   0              a[3,4][i];
+            -a[1,4][i]   -a[2,4][i]   -a[3,4][i]   0]
+end
+
+
+function make_3x3_full_matrix(a, i)
+    return [a[1,1][i] a[1,2][i] a[1,3][i];
+            a[2,1][i] a[2,2][i] a[2,3][i];
+            a[3,1][i] a[3,2][i] a[3,3][i]]
+end
+
+function make_4x4_full_matrix(a, i)
+    return     [a[1,1][i] a[1,2][i] a[1,3][i] a[1,4][i];
+                a[2,1][i] a[2,2][i] a[2,3][i] a[2,4][i];
+                a[3,1][i] a[3,2][i] a[3,3][i] a[3,4][i];
+                a[4,1][i] a[4,2][i] a[4,3][i] a[4,4][i]]
+end
+
+
 
 function variable_tp_branch_series_current_prod_hermitian(pm::GenericPowerModel{T}; n_cond::Int=3, nw::Int=pm.cnw, bounded = true) where T <: AbstractUBFForm
     branches = ref(pm, nw, :branch)
@@ -248,27 +274,11 @@ function variable_tp_branch_series_current_prod_hermitian(pm::GenericPowerModel{
     #reshape vectors to matrices
     for i in ids(pm, nw, :branch)
         if n_cond  == 3
-            ccm_re_dict[i] =
-            [ccm_re[1,1][i] ccm_re[1,2][i] ccm_re[1,3][i];
-            ccm_re[1,2][i] ccm_re[2,2][i] ccm_re[2,3][i];
-            ccm_re[1,3][i] ccm_re[2,3][i] ccm_re[3,3][i]]
-
-            ccm_im_dict[i] =
-            [0              ccm_im[1,2][i]   ccm_im[1,3][i];
-            -ccm_im[1,2][i]   0               ccm_im[2,3][i];
-            -ccm_im[1,3][i]   -ccm_im[2,3][i]   0]
+            ccm_re_dict[i] = make_3x3_symmetric_matrix(ccm_re, i)
+            ccm_im_dict[i] = make_3x3_skew_symmetric_matrix(ccm_im, i)
         elseif n_cond == 4
-            ccm_re_dict[i] =
-            [ccm_re[1,1][i] ccm_re[1,2][i] ccm_re[1,3][i] ccm_re[1,4][i];
-            ccm_re[1,2][i] ccm_re[2,2][i] ccm_re[2,3][i] ccm_re[2,4][i];
-            ccm_re[1,3][i] ccm_re[2,3][i] ccm_re[3,3][i] ccm_re[3,4][i];
-            ccm_re[1,4][i] ccm_re[2,4][i] ccm_re[3,4][i] ccm_re[4,4][i]]
-
-            ccm_im_dict[i] =
-            [0              ccm_im[1,2][i]   ccm_im[1,3][i]   ccm_im[1,4][i];
-            -ccm_im[1,2][i]   0               ccm_im[2,3][i]   ccm_im[2,4][i];
-            -ccm_im[1,3][i]   -ccm_im[2,3][i]   0               ccm_im[3,4][i];
-            -ccm_im[1,4][i]   -ccm_im[2,4][i]   -ccm_im[3,4][i]   0]
+            ccm_re_dict[i] = make_4x4_symmetric_matrix(ccm_re, i)
+            ccm_im_dict[i] = make_4x4_skew_symmetric_matrix(ccm_im, i)
         else
             error("this number of conductors is not supported")
         end
@@ -336,27 +346,11 @@ function variable_tp_branch_flow(pm::GenericPowerModel{T}; n_cond::Int=3, nw::In
 
     for i in ref(pm, nw, :arcs)
         if n_cond  == 3
-            P =
-            [P_mx[1,1][i] P_mx[1,2][i] P_mx[1,3][i];
-            P_mx[2,1][i] P_mx[2,2][i] P_mx[2,3][i];
-            P_mx[3,1][i] P_mx[3,2][i] P_mx[3,3][i]]
-
-            Q =
-            [Q_mx[1,1][i]   Q_mx[1,2][i]   Q_mx[1,3][i];
-            Q_mx[2,1][i]   Q_mx[2,2][i]   Q_mx[2,3][i];
-            Q_mx[3,1][i]   Q_mx[3,2][i]   Q_mx[3,3][i]]
+            P = make_3x3_full_matrix(P_mx, i)
+            Q = make_3x3_full_matrix(Q_mx, i)
         elseif n_cond == 4
-            P =
-            [P_mx[1,1][i] P_mx[1,2][i] P_mx[1,3][i] P_mx[1,4][i];
-            P_mx[2,1][i] P_mx[2,2][i] P_mx[2,3][i] P_mx[2,4][i];
-            P_mx[3,1][i] P_mx[3,2][i] P_mx[3,3][i] P_mx[3,4][i];
-            P_mx[4,1][i] P_mx[4,2][i] P_mx[4,3][i] P_mx[4,4][i]]
-
-            Q =
-            [Q_mx[1,1][i] Q_mx[1,2][i] Q_mx[1,3][i] Q_mx[1,4][i];
-            Q_mx[2,1][i] Q_mx[2,2][i] Q_mx[2,3][i] Q_mx[2,4][i];
-            Q_mx[3,1][i] Q_mx[3,2][i] Q_mx[3,3][i] Q_mx[3,4][i];
-            Q_mx[4,1][i] Q_mx[4,2][i] Q_mx[4,3][i] Q_mx[4,4][i]]
+            P = make_4x4_full_matrix(P_mx, i)
+            Q = make_4x4_full_matrix(Q_mx, i)
         else
             error("this number of conductors is not supported")
         end
@@ -371,6 +365,160 @@ function variable_tp_branch_flow(pm::GenericPowerModel{T}; n_cond::Int=3, nw::In
     end
     var(pm, nw)[:P_mx] = p_mx_dict
     var(pm, nw)[:Q_mx] = q_mx_dict
+end
+
+""
+function variable_tp_generation(pm::GenericPowerModel{T}; n_cond::Int=3, nw::Int=pm.cnw, bounded = true) where T <: AbstractUBFForm
+    smaxdict = Dict{Int64, Any}()
+
+    for i in ids(pm, nw, :gen)
+        pmin = ref(pm, nw, :gen, i, "pmin").values
+        pmax = ref(pm, nw, :gen, i, "pmax").values
+        qmin = ref(pm, nw, :gen, i, "qmin").values
+        qmax = ref(pm, nw, :gen, i, "qmin").values
+        smax = sqrt.(max.(abs.(pmin), abs.(pmax)).^2 + max.(abs.(qmin), abs.(qmax)).^2)
+        smaxdict[i] = sqrt.(smax*smax')
+    end
+    Pg_mx = Matrix(n_cond,n_cond)
+    Qg_mx = Matrix(n_cond,n_cond)
+
+    for c1 in 1:n_cond
+        for c2 in 1:n_cond
+            if bounded
+                Pg_mx[c1,c2] = @variable(pm.model,
+                [i in ids(pm, nw, :gen)], basename="$(nw)_$(c1)_$(c2)_pg",
+                lowerbound = -smaxdict[i][c1,c2],
+                upperbound =  smaxdict[i][c1,c2],
+                # start = PMs.getval(ref(pm, nw, :bus, i), "w_start", c, 1.001)
+                )
+
+                Qg_mx[c1,c2] = @variable(pm.model,
+                [i in ids(pm, nw, :gen)], basename="$(nw)_$(c1)_$(c2)_qg",
+                lowerbound = -smaxdict[i][c1,c2],
+                upperbound =  smaxdict[i][c1,c2],
+                # start = PMs.getval(ref(pm, nw, :bus, i), "w_start", c, 1.001)
+                )
+            else
+                Pg_mx[c1,c2] = @variable(pm.model,
+                [i in ids(pm, nw, :gen)], basename="$(nw)_$(c1)_$(c2)_pg",
+                # start = PMs.getval(ref(pm, nw, :bus, i), "w_start", c, 1.001)
+                )
+
+                Qg_mx[c1,c2] = @variable(pm.model,
+                [i in ids(pm, nw, :gen)], basename="$(nw)_$(c1)_$(c2)_qg",
+                # start = PMs.getval(ref(pm, nw, :bus, i), "w_start", c, 1.001)
+                )
+            end
+        end
+    end
+    p_mx_dict = Dict{Int64, Any}()
+    q_mx_dict = Dict{Int64, Any}()
+
+    for c in conductor_ids(pm)
+        var(pm, nw, c)[:pg] = Dict()
+        var(pm, nw, c)[:qg] = Dict()
+    end
+
+    for i in ids(pm, nw, :gen)
+        if n_cond  == 3
+            pg = make_3x3_full_matrix(Pg_mx, i)
+            qg = make_3x3_full_matrix(Qg_mx, i)
+        elseif n_cond == 4
+            pg = make_4x4_full_matrix(Pg_mx, i)
+            qg = make_4x4_full_matrix(Qg_mx, i)
+        else
+            error("this number of conductors is not supported")
+        end
+
+        p_mx_dict[i] = pg
+        q_mx_dict[i] = qg
+
+        for c in conductor_ids(pm)
+            var(pm, nw, c)[:pg][i] = pg[c,c]
+            var(pm, nw, c)[:qg][i] = qg[c,c]
+        end
+    end
+    var(pm, nw)[:Pg_mx] = p_mx_dict
+    var(pm, nw)[:Qg_mx] = q_mx_dict
+end
+
+""
+function variable_tp_load(pm::GenericPowerModel{T}; n_cond::Int=3, nw::Int=pm.cnw, bounded = true) where T <: AbstractUBFForm
+    smaxdict = Dict{Int64, Any}()
+
+    for i in ids(pm, nw, :load)
+        pmax = ref(pm, nw, :load, i, "pd").values
+        qmax = ref(pm, nw, :load, i, "qd").values
+        smax = sqrt.(pmax.^2 + qmax.^2)
+        smaxdict[i] = (smax*ones(size(smax))')
+    end
+    Pd_mx = Matrix(n_cond,n_cond)
+    Qd_mx = Matrix(n_cond,n_cond)
+
+    for c1 in 1:n_cond
+        for c2 in 1:n_cond
+            if bounded
+                Pd_mx[c1,c2] = @variable(pm.model,
+                [i in ids(pm, nw, :load)], basename="$(nw)_$(c1)_$(c2)_pd",
+                lowerbound = -smaxdict[i][c1,c2],
+                upperbound =  smaxdict[i][c1,c2],
+                # start = PMs.getval(ref(pm, nw, :bus, i), "w_start", c, 1.001)
+                )
+
+                Qd_mx[c1,c2] = @variable(pm.model,
+                [i in ids(pm, nw, :load)], basename="$(nw)_$(c1)_$(c2)_qd",
+                lowerbound = -smaxdict[i][c1,c2],
+                upperbound =  smaxdict[i][c1,c2],
+                # start = PMs.getval(ref(pm, nw, :bus, i), "w_start", c, 1.001)
+                )
+            else
+                Pd_mx[c1,c2] = @variable(pm.model,
+                [i in ids(pm, nw, :load)], basename="$(nw)_$(c1)_$(c2)_pd",
+                # start = PMs.getval(ref(pm, nw, :bus, i), "w_start", c, 1.001)
+                )
+
+                Qd_mx[c1,c2] = @variable(pm.model,
+                [i in ids(pm, nw, :load)], basename="$(nw)_$(c1)_$(c2)_qd",
+                # start = PMs.getval(ref(pm, nw, :bus, i), "w_start", c, 1.001)
+                )
+            end
+        end
+    end
+    p_mx_dict = Dict{Int64, Any}()
+    q_mx_dict = Dict{Int64, Any}()
+
+    for c in conductor_ids(pm)
+        var(pm, nw, c)[:pd] = Dict()
+        var(pm, nw, c)[:qd] = Dict()
+    end
+
+    for i in ids(pm, nw, :load)
+        if n_cond  == 3
+            pd = make_3x3_full_matrix(Pd_mx, i)
+            qd = make_3x3_full_matrix(Qd_mx, i)
+        elseif n_cond == 4
+            pd = make_4x4_full_matrix(Pd_mx, i)
+            qd = make_4x4_full_matrix(Qd_mx, i)
+        else
+            error("this number of conductors is not supported")
+        end
+
+        p_mx_dict[i] = pd
+        q_mx_dict[i] = qd
+
+        for c in conductor_ids(pm)
+            var(pm, nw, c)[:pd][i] = pd[c,c]
+            var(pm, nw, c)[:qd][i] = qd[c,c]
+            setlowerbound(pd[c,c], ref(pm, nw, :load)[i]["pd"][c])
+            setupperbound(pd[c,c], ref(pm, nw, :load)[i]["pd"][c])
+            setlowerbound(qd[c,c], ref(pm, nw, :load)[i]["qd"][c])
+            setupperbound(qd[c,c], ref(pm, nw, :load)[i]["qd"][c])
+
+
+        end
+    end
+    var(pm, nw)[:Pd_mx] = p_mx_dict
+    var(pm, nw)[:Qd_mx] = q_mx_dict
 end
 
 
@@ -441,7 +589,7 @@ function constraint_tp_voltage_magnitude_difference(pm::GenericPowerModel{T}, n:
     ccm_re =  var(pm, n, :CC_re)[i]
     ccm_im =  var(pm, n, :CC_im)[i]
 
-    #KVL over the line:
+    #Ohm's law over the line:
     @constraint(pm.model, diag(w_to_re) .== diag(
     w_fr_re   - p_s_fr  *r' - q_s_fr*x'        - r*p_s_fr'    - x*q_s_fr'
     + r*ccm_re*r' - x     *ccm_im*r' + x*ccm_re *x' + r*ccm_im *x'))
@@ -453,10 +601,62 @@ function constraint_tp_voltage_magnitude_difference(pm::GenericPowerModel{T}, n:
     + x*ccm_re*r' + r     *ccm_im*r' - r*ccm_re *x' + x*ccm_im *x'))
 end
 
+function constraint_tp_kcl_load(pm::GenericPowerModel{T}, n::Int, i, conductors) where T <: AbstractUBFForm
+    Pd = var(pm, n, :Pd_mx)[i]
+    Qd = var(pm, n, :Qd_mx)[i]
+
+    for row in conductors
+        @constraint(pm.model, [i in ids(pm, n, :load)], sum(Pd[row,col] for col in conductors)==0)
+        @constraint(pm.model, [i in ids(pm, n, :load)], sum(Qd[row,col] for col in conductors)==0)
+    end
+end
+
+function constraint_tp_kcl_gen(pm::GenericPowerModel{T}, n::Int, i, conductors) where T <: AbstractUBFForm
+    Pg = var(pm, n, :Pg_mx)[i]
+    Qg = var(pm, n, :Qg_mx)[i]
+
+    for row in conductors
+        @constraint(pm.model, [i in ids(pm, n, :gen)], sum(Pg[row,col] for col in conductors)==0)
+        @constraint(pm.model, [i in ids(pm, n, :gen)], sum(Qg[row,col] for col in conductors)==0)
+    end
+end
+
+
+
+"""
+```
+sum(p[a] for a in bus_arcs) + sum(p_dc[a_dc] for a_dc in bus_arcs_dc) == sum(pg[g] for g in bus_gens) - sum(pd[d] for d in bus_loads) - sum(gs[s] for d in bus_shunts)*w[i]
+sum(q[a] for a in bus_arcs) + sum(q_dc[a_dc] for a_dc in bus_arcs_dc) == sum(qg[g] for g in bus_gens) - sum(qd[d] for d in bus_loads) + sum(bs[s] for d in bus_shunts)*w[i]
+```
+"""
+function constraint_tp_kcl_shunt_mx(pm::GenericPowerModel{T}, n::Int, i, bus_arcs, bus_arcs_dc, bus_gens, bus_loads, bus_gs, bus_bs) where T <: PowerModels.AbstractWForms
+    w_re = var(pm, n, :W_re)[i]
+    w_im = var(pm, n, :W_im)[i]
+
+    p = var(pm, n, :P_mx)
+    q = var(pm, n, :Q_mx)
+
+    pg   = var(pm, n, :Pg_mx)
+    qg   = var(pm, n, :Qg_mx)
+
+    pd   = var(pm, n, :Pd_mx)
+    qd   = var(pm, n, :Qd_mx)
+
+    # p_dc = var(pm, n, c, :p_dc)
+    # q_dc = var(pm, n, c, :q_dc)
+
+    # @constraint(pm.model, sum(p[a] for a in bus_arcs) .== sum(pg[g] for g in bus_gens) - sum(pd for pd in values(bus_pd)) - sum(gs for gs in values(bus_gs))*w_re)
+    # @constraint(pm.model, sum(q[a] for a in bus_arcs) .== sum(qg[g] for g in bus_gens) - sum(qd for qd in values(bus_qd)) + sum(bs for bs in values(bus_bs))*w_re)
+    @constraint(pm.model, sum(p[a] for a in bus_arcs) .== sum(pg[g] for g in bus_gens) - sum(pd[d] for d in bus_loads) - sum(gs for gs in values(bus_gs))*w_re)
+    @constraint(pm.model, sum(q[a] for a in bus_arcs) .== sum(qg[g] for g in bus_gens) - sum(qd[d] for d in bus_loads) + sum(bs for bs in values(bus_bs))*w_re)
+end
+
+
 ""
 function get_solution_tp(pm::GenericPowerModel, sol::Dict{String,Any})
     add_bus_voltage_setpoint(sol, pm)
-    PMs.add_generator_power_setpoint(sol, pm)
+    add_generator_power_setpoint(sol, pm)
+    add_load_power_setpoint(sol, pm)
     add_branch_flow_setpoint(sol, pm)
     add_branch_current_setpoint(sol, pm)
     PMs.add_dcline_flow_setpoint(sol, pm)
@@ -480,6 +680,20 @@ function add_bus_voltage_setpoint(sol, pm::GenericPowerModel)
     add_setpoint_mx(sol, pm, "bus", "W_re",  :W_re)
     add_setpoint_mx(sol, pm, "bus", "W_im",  :W_im)
 
+end
+""
+function add_generator_power_setpoint(sol, pm::GenericPowerModel)
+    PMs.add_setpoint(sol, pm, "gen", "pg", :pg)
+    PMs.add_setpoint(sol, pm, "gen", "qg", :qg)
+
+    add_setpoint_mx(sol, pm, "gen", "Pg",  :Pg_mx)
+    add_setpoint_mx(sol, pm, "gen", "Qg",  :Qg_mx)
+end
+
+""
+function add_load_power_setpoint(sol, pm::GenericPowerModel)
+    add_setpoint_mx(sol, pm, "load", "Pd",  :Pd_mx)
+    add_setpoint_mx(sol, pm, "load", "Qd",  :Qd_mx)
 end
 
 ""

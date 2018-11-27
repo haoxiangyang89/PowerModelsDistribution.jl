@@ -25,6 +25,34 @@ function constraint_kcl_shunt_slack(pm::GenericPowerModel, i::Int; nw::Int=pm.cn
     constraint_kcl_shunt_slack(pm, nw, cnd, i, bus_arcs, bus_arcs_dc, bus_gens, bus_pd, bus_qd, bus_gs, bus_bs)
 end
 
+""
+function constraint_tp_kcl_shunt_mx(pm::GenericPowerModel, i::Int; nw::Int=pm.cnw)
+    if !haskey(con(pm, nw), :kcl_p)
+        con(pm, nw)[:kcl_p] = Dict{Int,ConstraintRef}()
+    end
+    if !haskey(con(pm, nw), :kcl_q)
+        con(pm, nw)[:kcl_q] = Dict{Int,ConstraintRef}()
+    end
+
+    bus = ref(pm, nw, :bus, i)
+    bus_arcs = ref(pm, nw, :bus_arcs, i)
+    bus_arcs_dc = ref(pm, nw, :bus_arcs_dc, i)
+    bus_gens = ref(pm, nw, :bus_gens, i)
+    bus_loads = ref(pm, nw, :bus_loads, i)
+    bus_shunts = ref(pm, nw, :bus_shunts, i)
+
+    # bus_pd = Dict(k => ref(pm, nw, :load, k, "pd", cnd) for k in bus_loads)
+    # bus_qd = Dict(k => ref(pm, nw, :load, k, "qd", cnd) for k in bus_loads)
+
+    # bus_pd = Dict(k => ref(pm, nw, :load, k, "pd") for k in bus_loads)
+    # bus_qd = Dict(k => ref(pm, nw, :load, k, "qd") for k in bus_loads)
+
+    bus_gs = Dict(k => ref(pm, nw, :shunt, k, "gs", cnd) for k in bus_shunts)
+    bus_bs = Dict(k => ref(pm, nw, :shunt, k, "bs", cnd) for k in bus_shunts)
+
+    constraint_tp_kcl_shunt_mx(pm, nw, i, bus_arcs, bus_arcs_dc, bus_gens, bus_loads, bus_gs, bus_bs)
+end
+
 
 ""
 function constraint_tp_voltage(pm::GenericPowerModel; nw::Int=pm.cnw)
@@ -200,4 +228,23 @@ function constraint_tp_storage_exchange(pm::GenericPowerModel, i::Int; nw::Int=p
 
     PMs.constraint_storage_complementarity(pm, nw, i)
     constraint_tp_storage_loss(pm, nw, i, storage["storage_bus"], storage["r"], storage["x"], storage["standby_loss"])
+end
+
+
+function constraint_tp_kcl_load(pm::GenericPowerModel, i::Int; nw::Int=pm.cnw)
+    load = ref(pm, nw, :load, i)
+    conductors = conductor_ids(pm)
+
+    if haskey(pm.setting, "as_delta") && pm.setting["as_delta"] == true
+        constraint_tp_kcl_load(pm::GenericPowerModel, nw, i, conductors)
+    end
+end
+
+function constraint_tp_kcl_gen(pm::GenericPowerModel, i::Int; nw::Int=pm.cnw)
+    gen = ref(pm, nw, :gen, i)
+    conductors = conductor_ids(pm)
+
+    if haskey(pm.setting, "as_delta") && pm.setting["as_delta"] == true
+        constraint_tp_kcl_gen(pm::GenericPowerModel, nw, i, conductors)
+    end
 end

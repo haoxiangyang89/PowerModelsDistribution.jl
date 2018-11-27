@@ -39,6 +39,7 @@ include("io/opendss.jl")
 
 include("prob/tp_opf.jl")
 include("prob/tp_opf_bf.jl")
+include("prob/tp_opf_bf_mx.jl")
 include("prob/tp_ots.jl")
 include("prob/tp_pf.jl")
 include("prob/tp_pf_bf.jl")

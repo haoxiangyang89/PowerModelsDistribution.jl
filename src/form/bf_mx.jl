@@ -375,7 +375,7 @@ function variable_tp_generation(pm::GenericPowerModel{T}; n_cond::Int=3, nw::Int
         qmin = ref(pm, nw, :gen, i, "qmin").values
         qmax = ref(pm, nw, :gen, i, "qmin").values
         smax = sqrt.(max.(abs.(pmin), abs.(pmax)).^2 + max.(abs.(qmin), abs.(qmax)).^2)
-        smaxdict[i] = sqrt.(smax*smax')
+        smaxdict[i] = (smax*ones(size(smax))')
     end
     Pg_mx = Matrix(n_cond,n_cond)
     Qg_mx = Matrix(n_cond,n_cond)

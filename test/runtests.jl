@@ -31,11 +31,11 @@ cbc_solver = with_optimizer(Cbc.Optimizer, logLevel=0)
 scs_solver = with_optimizer(SCS.Optimizer, max_iters=20000, eps=1e-5, alpha=0.4, verbose=0)
 juniper_solver = with_optimizer(Juniper.Optimizer, nl_solver=with_optimizer(Ipopt.Optimizer, tol=1e-4, print_level=0), mip_solver=cbc_solver, log_levels=[])
 
-include("common.jl") # all passing
+include("common.jl")
 
 @testset "PowerModelsDistribution" begin
 
-    include("opendss.jl") # all passing
+    include("opendss.jl")  # three tests disabled temporarily
 
     include("data.jl") # all passing
 

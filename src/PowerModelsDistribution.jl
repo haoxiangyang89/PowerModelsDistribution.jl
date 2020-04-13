@@ -7,9 +7,15 @@ module PowerModelsDistribution
     import InfrastructureModels
     import Memento
 
+    import Dierckx: Spline1D
+
     import LinearAlgebra
 
-    const _PMs = PowerModels
+    const _PM = PowerModels
+    const _IM = InfrastructureModels
+
+    import PowerModels: ACPPowerModel, ACRPowerModel, DCPPowerModel, NFAPowerModel, SOCWRPowerModel, conductor_ids, ismulticonductor
+    import InfrastructureModels: ids, ref, var, con, sol, nw_ids, nws, ismultinetwork
 
     function __init__()
         global _LOGGER = Memento.getlogger(PowerModels)
@@ -39,12 +45,21 @@ module PowerModelsDistribution
     include("core/constraint_template.jl")
     include("core/relaxation_scheme.jl")
 
-    include("io/common.jl")
-    include("io/json.jl")
+    include("io/utils.jl")
     include("io/dss_parse.jl")
     include("io/dss_structs.jl")
     include("io/opendss.jl")
+    include("io/json.jl")
+    include("io/common.jl")
 
+    include("data_model/utils.jl")
+    include("data_model/checks.jl")
+    include("data_model/components.jl")
+    include("data_model/eng2math.jl")
+    include("data_model/math2eng.jl")
+    include("data_model/units.jl")
+
+    include("prob/common.jl")
     include("prob/mld.jl")
     include("prob/opf.jl")
     include("prob/opf_iv.jl")

@@ -1,8 +1,30 @@
 import Base.Iterators: flatten
 
+"all node types that can help define buses"
+const _dss_node_objects = Vector{String}([
+    "isource", "load", "generator", "indmach012", "storage", "pvsystem"
+])
 
 "all edge types that can help define buses"
-const _dss_edge_components = Vector{String}(["line", "transformer", "reactor", "capacitor"])
+const _dss_edge_objects = Vector{String}([
+    "vsource", "fault", "capacitor", "line", "reactor", "transformer", "gictransformer", "gicline"
+])
+
+"all data holding objects"
+const _dss_data_objects = Vector{String}([
+    "options", "xfmrcode", "linecode", "loadshape", "xycurve", "linegeometry",
+    "linespacing", "growthshape", "tcc_curve", "cndata", "tsdata", "wiredata"
+])
+
+"all objects that define controls"
+const _dss_control_objects = Vector{String}([
+    "capcontrol", "regcontrol", "swtcontrol", "relay", "recloser", "fuse"
+])
+
+"all objects that provide montoring"
+const _dss_monitor_objects = Vector{String}([
+    "energymeter", "monitor"
+])
 
 "components currently supported for automatic data type parsing"
 const _dss_supported_components = Vector{String}([
@@ -41,14 +63,12 @@ _single_operators = Dict{String,Any}(
 const _array_delimiters = Vector{Char}(['\"', '\'', '[', '{', '(', ']', '}', ')'])
 
 "properties that should be excluded from being overwritten during the application of `like`"
-const _like_exclusions = Dict{String,Vector{String}}(
-    "all" => ["name", "bus1", "bus2", "phases", "nphases", "enabled"],
-    "line" => ["switch"],
-    "transformer" => ["bank", "bus", "bus_2", "bus_3", "buses", "windings", "wdg", "wdg_2", "wdg_3"],
-    "linegeometry" => ["nconds"]
+const _like_exclusions = Dict{String,Vector{Regex}}(
+    "all" => Vector{Regex}([r"name", r"enabled"]),
+    "line" => [r"switch"],
 )
 
-""
+"Regexes for determining data types"
 const _dtype_regex = Dict{Regex, Type}(
     r"^[+-]{0,1}\d*\.{0,1}\d*[eE]{0,1}[+-]{0,1}\d*[+-]\d*\.{0,1}\d*[eE]{0,1}[+-]{0,1}\d*[ij]$" => ComplexF64,
     r"^[+-]{0,1}\d*\.{0,1}\d*[eE]{0,1}[+-]{0,1}\d*$" => Float64,
@@ -277,26 +297,32 @@ function _bank_transformers!(data_eng::Dict{String,<:Any})
                     bankable_transformers[bank] = ([], [])
                 end
                 push!(bankable_transformers[bank][1], id)
-                push!(bankable_transformers[bank][2], tr)
+                push!(bankable_transformers[bank][2], deepcopy(tr))
             end
         end
 
         for (bank, (ids, trs)) in bankable_transformers
+            for tr in trs
+                _apply_xfmrcode!(tr, data_eng)
+            end
             # across-phase properties should be the same to be eligible for banking
             props = ["bus", "noloadloss", "xsc", "rs", "imag", "vnom", "snom", "polarity", "configuration"]
             btrans = Dict{String, Any}(prop=>trs[1][prop] for prop in props)
             if !all(tr[prop]==btrans[prop] for tr in trs, prop in props)
+                Memento.warn(_LOGGER, "Not all across-phase properties match among transfomers identified by bank='$bank', aborting attempt to bank")
                 continue
             end
             nrw = length(btrans["bus"])
 
             # only attempt to bank wye-connected transformers
             if !all(all(tr["configuration"].=="wye") for tr in trs)
+                Memento.warn(_LOGGER, "Not all configurations 'wye' on transformers identified by bank='$bank', aborting attempt to bank")
                 continue
             end
             neutrals = [conns[end] for conns in trs[1]["connections"]]
             # ensure all windings have the same neutral
             if !all(all(conns[end]==neutrals[w] for (w, conns) in enumerate(tr["connections"])) for tr in trs)
+                Memento.warn(_LOGGER, "Not all neutral phases match on transfomers identified by bank='$bank', aborting attempt to bank")
                 continue
             end
 
@@ -304,7 +330,7 @@ function _bank_transformers!(data_eng::Dict{String,<:Any})
             # f_connections will be sorted from small to large
             f_phases_loc = Dict(hcat([[(c,(i,p)) for (p, c) in enumerate(tr["connections"][1][1:end-1])] for (i, tr) in enumerate(trs)]...))
             locs = [f_phases_loc[x] for x in sort(collect(keys(f_phases_loc)))]
-            props_merge = ["connections", "tm", "tm_max", "tm_min", "fixed"]
+            props_merge = ["connections", "tm", "tm_max", "tm_min", "fixed", "tm_step", "tm_fix"]
             for prop in props_merge
                 btrans[prop] = [[trs[i][prop][w][p] for (i,p) in locs] for w in 1:nrw]
 
@@ -322,12 +348,7 @@ function _bank_transformers!(data_eng::Dict{String,<:Any})
             for id in ids
                 delete!(data_eng["transformer"], id)
             end
-            btrans_name = bank
-            if haskey(data_eng["transformer"], bank)
-                Memento.warn("The bank name ($bank) is already used for another transformer; using the name of the first transformer $(ids[1]) in the bank instead.")
-                btrans_name = ids[1]
-            end
-            data_eng["transformer"][btrans_name] = btrans
+            data_eng["transformer"][bank] = btrans
         end
     end
 end
@@ -438,7 +459,7 @@ end
 "Returns an ordered list of defined conductors. If ground=false, will omit any `0`"
 function _get_conductors_ordered(busname::AbstractString; default::Vector{Int}=Vector{Int}([]), check_length::Bool=true, pad_ground::Bool=false)::Vector{Int}
     parts = split(busname, '.'; limit=2)
-    ret = []
+    ret = Vector{Int}([])
     if length(parts)==2
         conds_str = split(parts[2], '.')
         ret = [parse(Int, i) for i in conds_str]
@@ -481,25 +502,40 @@ function _get_idxs(vec::Vector{<:Any}, els::Vector{<:Any})::Vector{Int}
 end
 
 
-""
-function _get_ilocs(vec::Vector{<:Any}, loc::Any)::Vector{Int}
-    return collect(1:length(vec))[vec.==loc]
-end
-
-
 "Discovers all of the buses (not separately defined in OpenDSS), from \"lines\""
 function _discover_buses(data_dss::Dict{String,<:Any})::Set
     buses = Set([])
-    for obj_type in _dss_edge_components
+    for obj_type in _dss_node_objects
         for (name, dss_obj) in get(data_dss, obj_type, Dict{String,Any}())
+            _apply_like!(dss_obj, data_dss, obj_type)
+            push!(buses, split(dss_obj["bus1"], '.'; limit=2)[1])
+        end
+    end
+
+    for obj_type in _dss_edge_objects
+        for (name, dss_obj) in get(data_dss, obj_type, Dict{String,Any}())
+            _apply_like!(dss_obj, data_dss, obj_type)
             if obj_type == "transformer"
-                dss_obj = _create_transformer(name; _to_kwargs(dss_obj)...)
-                for bus in dss_obj["buses"]
+                transformer = _create_transformer(name; _to_kwargs(dss_obj)...)
+                for bus in transformer["buses"]
                     push!(buses, split(bus, '.'; limit=2)[1])
                 end
-            elseif haskey(dss_obj, "bus2")
+            elseif obj_type == "gictransformer"
+                for key in ["bush", "busx", "busnh", "busnx"]
+                    if haskey(dss_obj, key)
+                        push!(buses, split(dss_obj[key], '.'; limit=2)[1])
+                    end
+                end
+            elseif obj_type == "vsource"
+                push!(buses, split(get(dss_obj, "bus1", "sourcebus"), '.'; limit=2)[1])
+                if haskey(dss_obj, "bus2")
+                    push!(buses, split(dss_obj["bus2"], '.'; limit=2)[1])
+                end
+            else
                 for key in ["bus1", "bus2"]
-                    push!(buses, split(dss_obj[key], '.'; limit=2)[1])
+                    if haskey(dss_obj, key)
+                        push!(buses, split(dss_obj[key], '.'; limit=2)[1])
+                    end
                 end
             end
         end
@@ -554,7 +590,7 @@ function _to_kwargs(data::Dict{String,Any})::Dict{Symbol,Any}
 end
 
 
-""
+"apply properties in the order that they are given"
 function _apply_ordered_properties(defaults::Dict{String,<:Any}, raw_dss::Dict{String,<:Any}; code_dict::Dict{String,<:Any}=Dict{String,Any}())::Dict{String,Any}
     _defaults = deepcopy(defaults)
 
@@ -582,7 +618,7 @@ function _apply_like!(raw_dss::Dict{String,<:Any}, data_dss::Dict{String,<:Any},
         for prop in raw_dss["prop_order"]
             push!(new_prop_order, prop)
 
-            if prop in get(_like_exclusions, comp_type, []) || prop in _like_exclusions["all"]
+            if any(match(key, prop) !== nothing for key in [get(_like_exclusions, comp_type, [])..., _like_exclusions["all"]...])
                 continue
             end
 
@@ -622,12 +658,10 @@ end
 
 
 """
-    parse_dss_with_dtypes!(data_dss, to_parse)
-
 Parses the data in keys defined by `to_parse` in `data_dss` using types given by
 the default properties from the `get_prop_default` function.
 """
-function parse_dss_with_dtypes!(data_dss::Dict{String,<:Any}, to_parse::Vector{String}=_dss_supported_components)
+function _parse_dss_with_dtypes!(data_dss::Dict{String,<:Any}, to_parse::Vector{String}=_dss_supported_components)
     for obj_type in to_parse
         if haskey(data_dss, obj_type)
             dtypes = _dss_parameter_data_types[obj_type]
@@ -679,7 +713,7 @@ function _parse_element_with_dtype(dtype::Type, element::AbstractString)
 end
 
 
-""
+"parses data type of properties of objects"
 function _parse_obj_dtypes!(obj_type::String, object::Dict{String,Any}, dtypes::Dict{String,Type})
     for (k, v) in object
         if isa(v, Vector) && eltype(v) == Any || isa(eltype(v), AbstractString)
@@ -705,51 +739,6 @@ function _parse_obj_dtypes!(obj_type::String, object::Dict{String,Any}, dtypes::
 end
 
 
-"""
-Given a set of addmittances 'y' connected from the conductors 'f_cnds' to the
-conductors 't_cnds', this method will return a list of conductors 'cnd' and a
-matrix 'Y', which will satisfy I[cnds] = Y*V[cnds].
-"""
-function _calc_shunt(f_cnds, t_cnds, y)
-    # TODO add types
-    cnds = unique([f_cnds..., t_cnds...])
-    e(f,t) = reshape([c==f ? 1 : c==t ? -1 : 0 for c in cnds], length(cnds), 1)
-    Y = sum([e(f_cnds[i], t_cnds[i])*y[i]*e(f_cnds[i], t_cnds[i])' for i in 1:length(y)])
-    return (cnds, Y)
-end
-
-
-"""
-Given a set of terminals 'cnds' with associated shunt addmittance 'Y', this
-method will calculate the reduced addmittance matrix if terminal 'ground' is
-grounded.
-"""
-function _calc_ground_shunt_admittance_matrix(cnds::Vector{Int}, Y::Matrix{T}, ground::Int)::Tuple{Vector{Int}, Matrix{T}} where T
-    # TODO add types
-    if ground in cnds
-        cndsr = setdiff(cnds, ground)
-        cndsr_inds = _get_idxs(cnds, cndsr)
-        Yr = Y[cndsr_inds, cndsr_inds]
-        return (cndsr, Yr)
-    else
-        return cnds, Y
-    end
-end
-
-
-""
-function _rm_floating_cnd(cnds::Vector{Int}, Y::Matrix{T}, f::Int) where T
-    P = setdiff(cnds, f)
-
-    f_inds = _get_idxs(cnds, [f])
-    P_inds = _get_idxs(cnds, P)
-
-    Yrm = Y[P_inds,P_inds]-(1/Y[f_inds,f_inds][1])*Y[P_inds,f_inds]*Y[f_inds,P_inds]
-
-    return (P,Yrm)
-end
-
-
 ""
 function _register_awaiting_ground!(bus::Dict{String,<:Any}, connections::Vector{Int})
     if !haskey(bus, "awaiting_ground")
@@ -763,6 +752,12 @@ end
 "checks to see if a property is after linecode"
 function _is_after_linecode(prop_order::Vector{String}, property::String)::Bool
     return _is_after(prop_order, property, "linecode")
+end
+
+
+"checks to see if a property is after xfmrcode"
+function _is_after_xfmrcode(prop_order::Vector{String}, property::String)::Bool
+    return _is_after(prop_order, property, "xfmrcode")
 end
 
 

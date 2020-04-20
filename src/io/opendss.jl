@@ -163,8 +163,8 @@ function _dss2eng_load!(data_eng::Dict{String,<:Any}, data_dss::Dict{String,<:An
 
         eng_obj["vnom"] = kv
 
-        eng_obj["pd"] = fill(defaults["kw"]/nphases, nphases)
-        eng_obj["qd"] = fill(defaults["kvar"]/nphases, nphases)
+        eng_obj["pd_nom"] = fill(defaults["kw"]/nphases, nphases)
+        eng_obj["qd_nom"] = fill(defaults["kvar"]/nphases, nphases)
 
         if import_all
             _import_all!(eng_obj, dss_obj, dss_obj["prop_order"])
@@ -221,10 +221,23 @@ function _dss2eng_capacitor!(data_eng::Dict{String,<:Any}, data_dss::Dict{String
             if defaults["phases"] in [2,3]
                 vnom_ln = vnom_ln/sqrt(3)
             end
-            eng_obj["kv"] = fill(vnom_ln, nphases)
+            defaults["kv"] = fill(vnom_ln, nphases)
 
             # 'kvar' is specified for all phases at once; we want the per-phase one
-            eng_obj["kvar"] = fill(defaults["kvar"] / nphases, nphases)
+            defaults["kvar"] = fill(defaults["kvar"] / nphases, nphases)
+
+            # TODO check unit conversion on qnom/b
+            vnom_ln = defaults["kv"]
+            qnom = defaults["kvar"] ./ 1e3
+            b = qnom ./ vnom_ln.^2
+
+            # convert to a shunt matrix
+            terminals, B = _calc_shunt(f_terminals, t_terminals, b)
+
+            # if one terminal is ground (0), reduce shunt addmittance matrix
+            terminals, B = _calc_ground_shunt_admittance_matrix(terminals, B, 0)
+
+            eng_obj["bs"] = B
 
             _add_eng_obj!(data_eng, "shunt_capacitor", name, eng_obj)
         else
@@ -248,22 +261,27 @@ function _dss2eng_reactor!(data_eng::Dict{String,<:Any}, data_dss::Dict{String,<
             _apply_like!(dss_obj, data_dss, "reactor")
             defaults = _apply_ordered_properties(_create_reactor(name; _to_kwargs(dss_obj)...), dss_obj)
 
+            nphases = defaults["phases"]
+
             eng_obj = Dict{String,Any}(
-                "phases" => defaults["phases"],
                 "configuration" => defaults["conn"],
                 "bus" => _parse_busname(defaults["bus1"])[1],
-                "kvar"  => defaults["kvar"],
                 "status" => convert(Int, defaults["enabled"]),
                 "source_id" => "reactor.$name",
             )
 
-            connections_default = eng_obj["configuration"] == "wye" ? [collect(1:eng_obj["phases"])..., 0] : collect(1:eng_obj["phases"])
+            connections_default = eng_obj["configuration"] == "wye" ? [collect(1:nphases)..., 0] : collect(1:nphases)
             eng_obj["connections"] = _get_conductors_ordered(defaults["bus1"], default=connections_default, check_length=false)
 
             # if the ground is used directly, register
             if 0 in eng_obj["connections"]
                 _register_awaiting_ground!(data_eng["bus"][eng_obj["bus"]], eng_obj["connections"])
             end
+
+            # TODO Check unit conversion on Gcap
+            Gcap = sum(defaults["kvar"]) / (nphases * 1e3 * (data_eng["settings"]["vbase"])^2)
+
+            eng_obj["bs"] = diagm(0=>fill(Gcap, nphases))
 
             if import_all
                 _import_all!(eng_obj, dss_obj, dss_obj["prop_order"])
@@ -278,7 +296,6 @@ function _dss2eng_reactor!(data_eng::Dict{String,<:Any}, data_dss::Dict{String,<
             eng_obj = Dict{String,Any}()
 
             nphases = defaults["phases"]
-            eng_obj["phases"] = nphases
 
             eng_obj["f_bus"] = _parse_busname(defaults["bus1"])[1]
             eng_obj["t_bus"] = _parse_busname(defaults["bus2"])[1]
@@ -328,12 +345,12 @@ function _dss2eng_generator!(data_eng::Dict{String,<:Any}, data_dss::Dict{String
             "phases" => nphases,
             "connections" => _get_conductors_ordered(defaults["bus1"], pad_ground=true, default=collect(1:defaults["phases"]+1)),
             "bus" => _parse_busname(defaults["bus1"])[1],
-            "kw" => fill(defaults["kw"] / nphases, nphases),
-            "kvar" => fill(defaults["kvar"] / nphases, nphases),
-            "kv" => fill(defaults["kv"], nphases),
-            "kvar_min" => fill(defaults["minkvar"] / nphases, nphases),
-            "kvar_max" => fill(defaults["maxkvar"] / nphases, nphases),
-            "control_model" => defaults["model"],
+            "pg" => fill(defaults["kw"] / nphases, nphases),
+            "qg" => fill(defaults["kvar"] / nphases, nphases),
+            "vg" => fill(defaults["kv"], nphases),
+            "qg_lb" => fill(defaults["minkvar"] / nphases, nphases),
+            "qg_ub" => fill(defaults["maxkvar"] / nphases, nphases),
+            "control_mode" => defaults["model"],
             "configuration" => "wye",
             "status" => convert(Int, defaults["enabled"]),
             "source_id" => "generator.$(name)"
@@ -415,6 +432,10 @@ function _dss2eng_linecode!(data_eng::Dict{String,<:Any}, data_dss::Dict{String,
         eng_obj["g_fr"] = fill(0.0, nphases, nphases)
         eng_obj["g_to"] = fill(0.0, nphases, nphases)
 
+        if import_all
+            _import_all!(eng_obj, dss_obj, dss_obj["prop_order"])
+        end
+
         _add_eng_obj!(data_eng, "linecode", name, eng_obj)
     end
 end
@@ -431,12 +452,13 @@ function _dss2eng_line!(data_eng::Dict{String,<:Any}, data_dss::Dict{String,<:An
 
         defaults = _apply_ordered_properties(_create_line(name; _to_kwargs(dss_obj)...), dss_obj)
 
+        _like_is_switch = haskey(dss_obj, "like") && get(get(data_dss["line"], dss_obj["like"], Dict{String,Any}()), "switch", false)
         nphases = defaults["phases"]
 
         eng_obj = Dict{String,Any}(
             "f_bus" => _parse_busname(defaults["bus1"])[1],
             "t_bus" => _parse_busname(defaults["bus2"])[1],
-            "length" => defaults["length"],
+            "length" => defaults["switch"] || _like_is_switch ? 0.001 : defaults["length"],
             "f_connections" => _get_conductors_ordered(defaults["bus1"], default=collect(1:nphases)),
             "t_connections" => _get_conductors_ordered(defaults["bus2"], default=collect(1:nphases)),
             "status" => convert(Int, defaults["enabled"]),
@@ -463,11 +485,10 @@ function _dss2eng_line!(data_eng::Dict{String,<:Any}, data_dss::Dict{String,<:An
         end
 
         # if the ground is used directly, register
-        if 0 in eng_obj["f_connections"]
-            _register_awaiting_ground!(data_eng["bus"][eng_obj["f_bus"]], eng_obj["f_connections"])
-        end
-        if 0 in eng_obj["t_connections"]
-            _register_awaiting_ground!(data_eng["bus"][eng_obj["t_bus"]], eng_obj["t_connections"])
+        for prefix in ["f_", "t_"]
+            if 0 in eng_obj["$(prefix)connections"]
+                _register_awaiting_ground!(data_eng["bus"][eng_obj["$(prefix)bus"]], eng_obj["$(prefix)connections"])
+            end
         end
 
         if import_all
@@ -492,94 +513,22 @@ function _dss2eng_xfmrcode!(data_eng::Dict{String,<:Any}, data_dss::Dict{String,
         nphases = defaults["phases"]
         nrw = defaults["windings"]
 
-        _eng_obj = Dict{String,Any}(
-            "tm" => Vector{Any}(missing, nrw),
-            "tm_min" => Vector{Any}(missing, nrw),
-            "tm_max" => Vector{Any}(missing, nrw),
-            "fixed" => Vector{Any}(missing, nrw),
-            "vnom" => Vector{Any}(missing, nrw),
-            "snom" => Vector{Any}(missing, nrw),
-            "configuration" => Vector{Any}(missing, nrw),
-            "rs" => Vector{Any}(missing, nrw),
-            "noloadloss" => missing,
-            "imag" => missing,
-            "xsc" => Vector{Any}(missing, nrw == 2 ? 1 : 3),
-            "leadlag" => missing,
+        eng_obj = Dict{String,Any}(
+            "tm" => Vector{Vector{Float64}}([fill(tap, nphases) for tap in defaults["taps"]]),
+            "tm_min" => Vector{Vector{Float64}}(fill(fill(defaults["mintap"], nphases), nrw)),
+            "tm_max" => Vector{Vector{Float64}}(fill(fill(defaults["maxtap"], nphases), nrw)),
+            "tm_fix" => Vector{Vector{Int}}([fill(1, nphases) for w in 1:nrw]),
+            "tm_step" => Vector{Vector{Float64}}(fill(fill(1/32, nphases), nrw)),
+            "fixed" => Vector{Int}(fill(1, nrw)),
+            "vnom" => Vector{Float64}(defaults["kvs"]),
+            "snom" => Vector{Float64}(defaults["kvas"]),
+            "configuration" => Vector{String}(defaults["conns"]),
+            "rs" => Vector{Float64}(defaults["%rs"] ./ 100),
+            "noloadloss" => defaults["%noloadloss"] / 100,
+            "imag" => defaults["%imag"] / 100,
+            "xsc" => nrw == 2 ? [defaults["xhl"] / 100] : [defaults["xhl"], defaults["xht"], defaults["xlt"]] ./ 100,
             "source_id" => "xfmrcode.$name",
         )
-
-        eng_obj = Dict{String,Any}("phases"=>nphases, "windings"=>nrw)
-
-        winding_key = ["", "_2", "_3"]
-        for w in 1:nrw
-            if haskey(dss_obj, "conns") || haskey(dss_obj, "conn$(winding_key[w])")
-                eng_obj["configuration"] = _eng_obj["configuration"]
-                eng_obj["configuration"][w] = defaults["conns"][w]
-            end
-
-            if haskey(dss_obj, "taps") || haskey(dss_obj, "tap$(winding_key[w])")
-                eng_obj["tm"] = _eng_obj["tm"]
-                eng_obj["tm"][w] = fill(defaults["taps"][w], nphases)
-            end
-
-            if haskey(dss_obj, "mintap")
-                eng_obj["tm_min"] = _eng_obj["tm_min"]
-                eng_obj["tm_min"][w] = fill(defaults["mintap"], nphases)
-            end
-
-            if haskey(dss_obj, "maxtap")
-                eng_obj["tm_max"] = _eng_obj["tm_max"]
-                eng_obj["tm_max"][w] = fill(defaults["maxtap"], nphases)
-            end
-
-            if haskey(dss_obj, "kvs") || haskey(dss_obj, "kv$(winding_key[w])")
-                eng_obj["vnom"] = _eng_obj["vnom"]
-                eng_obj["vnom"][w] = defaults["kvs"][w]
-            end
-
-            if haskey(dss_obj, "kvas") || haskey(dss_obj, "kva$(winding_key[w])")
-                eng_obj["snom"] = _eng_obj["snom"]
-                eng_obj["snom"][w] = defaults["kvas"][w]
-            end
-
-            if haskey(dss_obj, "%rs") || haskey(dss_obj, "%r$(winding_key[w])")
-                eng_obj["rs"] = _eng_obj["rs"]
-                eng_obj["rs"][w] = defaults["%rs"][w] / 100
-            end
-        end
-
-        if haskey(dss_obj, "%noloadloss")
-            eng_obj["noloadloss"] = _eng_obj["noloadloss"]
-            eng_obj["noloadloss"] = defaults["%noloadloss"] / 100
-        end
-
-        if haskey(dss_obj, "%imag")
-            eng_obj["imag"] = _eng_obj["imag"]
-            eng_obj["imag"] = defaults["%imag"] / 100
-        end
-
-        if haskey(dss_obj, "xhl")
-            eng_obj["xsc"] = _eng_obj["xsc"]
-            eng_obj["xsc"][1] = defaults["xhl"] / 100
-        end
-
-        if haskey(dss_obj, "xht") && nrw == 3
-            eng_obj["xsc"] = _eng_obj["xsc"]
-            eng_obj["xsc"][2] = defaults["xht"] / 100
-        end
-
-        if haskey(dss_obj, "xlt") && nrw == 3
-            eng_obj["xsc"] = _eng_obj["xsc"]
-            eng_obj["xsc"][3] = defaults["xlt"] / 100
-        end
-
-        if haskey(dss_obj, "leadlag")
-            eng_obj["leadlag"] = defaults["leadlag"]
-        end
-
-        if !haskey(eng_obj, "configuration")
-            eng_obj["configuration"] = fill("wye", nrw)
-        end
 
         if import_all
             _import_all!(eng_obj, dss_obj, dss_obj["prop_order"])
@@ -590,65 +539,142 @@ function _dss2eng_xfmrcode!(data_eng::Dict{String,<:Any}, data_dss::Dict{String,
 end
 
 
-
 "Adds transformers to `data_eng` from `data_dss`"
 function _dss2eng_transformer!(data_eng::Dict{String,<:Any}, data_dss::Dict{String,<:Any}, import_all::Bool)
     for (name, dss_obj) in get(data_dss, "transformer", Dict{String,Any}())
         _apply_like!(dss_obj, data_dss, "transformer")
         defaults = _apply_ordered_properties(_create_transformer(name; _to_kwargs(dss_obj)...), dss_obj)
 
-        eng_obj = Dict{String, Any}()
+        eng_obj = Dict{String, Any}(
+            "source_id" => "transformer.$name"
+        )
 
-        # import certain properties from the xfmrcode; needed to check connectivity
+        # no way around checking xfmrcode for these properties
+        _shared = Dict{String,Any}(
+            "leadlag" => defaults["leadlag"],
+            "conns" => defaults["conns"],
+            "phases" => defaults["phases"],
+            "windings" => defaults["windings"]
+        )
         if haskey(dss_obj, "xfmrcode")
-            xfmrcode = data_eng["xfmrcode"][dss_obj["xfmrcode"]]
-            @show xfmrcode
-            nphases = xfmrcode["phases"]
-            nrw = xfmrcode["windings"]
-            confs = xfmrcode["configuration"]
-            #TODO also tm_min/tm_max
-        else
-            # import defaults and save in eng_obj
-            nphases = defaults["phases"]
-            nrw = defaults["windings"]
-            dyz_map = Dict("wye"=>"wye", "delta"=>"delta", "ll"=>"delta", "ln"=>"wye")
-            eng_obj["configuration"] = confs = [dyz_map[x] for x in defaults["conns"]]
-            eng_obj["tm_min"] = fill(fill(defaults["mintap"], nphases), nrw)
-            eng_obj["tm_max"] = fill(fill(defaults["maxtap"], nphases), nrw)
-            eng_obj["vnom"] = [defaults["kvs"][w] for w in 1:nrw]
-            eng_obj["snom"] = [defaults["kvas"][w] for w in 1:nrw]
-            # loss model (converted to SI units, referred to secondary)
-            eng_obj["rs"] = [defaults["%rs"][w]/100 for w in 1:nrw]
-            eng_obj["noloadloss"] = defaults["%noloadloss"]/100
-            eng_obj["imag"] = defaults["%imag"]/100
-            if nrw==2
-                eng_obj["xsc"] = [defaults["xhl"]]/100
-            elseif nrw==3
-                eng_obj["xsc"] = [defaults[x] for x in ["xhl", "xht", "xlt"]]/100
+            xfmrcode_dss_obj = deepcopy(data_dss["xfmrcode"][dss_obj["xfmrcode"]])
+            _apply_like!(xfmrcode_dss_obj, data_dss, "xfmrcode")
+            xfmrcode = _apply_ordered_properties(_create_xfmrcode(string(dss_obj["xfmrcode"]); _to_kwargs(xfmrcode_dss_obj)...), xfmrcode_dss_obj)
+
+            for key in ["leadlag", "conns", "phases", "windings"]
+                if haskey(dss_obj, key) && _is_after_xfmrcode(dss_obj["prop_order"], key)
+                    _shared[key] = defaults[key]
+                else
+                    _shared[key] = xfmrcode[key]
+                end
             end
+        end
+
+        leadlag = _shared["leadlag"]
+        confs = _shared["conns"]
+        nphases = _shared["phases"]
+        nrw = _shared["windings"]
+
+        # taps
+        if isempty(defaults["xfmrcode"]) || (haskey(dss_obj, "taps") && _is_after_xfmrcode(dss_obj["prop_order"], "taps")) || all(haskey(dss_obj, k) && _is_after_xfmrcode(dss_obj["prop_order"], k) for k in ["tap", "tap_2", "tap_3"])
+            eng_obj["tm"] = [fill(defaults["taps"][w], nphases) for w in 1:nrw]
+        else
+            for (w, key_suffix) in enumerate(["", "_2", "_3"])
+                if haskey(dss_obj, "tap$(key_suffix)") && _is_after_xfmrcode(dss_obj["prop_order"], "tap$(key_suffix)")
+                    if !haskey(eng_obj, "tm")
+                        eng_obj["tm"] = Vector{Any}(missing, nrw)
+                    end
+                    eng_obj["tm"][w] = fill(defaults["taps"][defaults["wdg$(key_suffix)"]], nphases)
+                end
+            end
+        end
+
+        # kvs, kvas
+        for (fr_key, to_key) in zip(["kv", "kva"], ["vnom", "snom"])
+            if isempty(defaults["xfmrcode"]) || (haskey(dss_obj, "$(fr_key)s") && _is_after_xfmrcode(dss_obj["prop_order"], "$(fr_key)s")) || all(haskey(dss_obj, "$(fr_key)$(key_suffix)") && _is_after_xfmrcode(dss_obj["prop_order"], "$(fr_key)$(key_suffix)") for key_suffix in ["", "_2", "_3"])
+                eng_obj[to_key] = defaults["$(fr_key)s"]
+            else
+                for (w, key_suffix) in enumerate(["", "_2", "_3"])
+                    if haskey(dss_obj, "$(fr_key)$(key_suffix)") && _is_after_xfmrcode(dss_obj["prop_order"], "$(fr_key)$(key_suffix)")
+                        if !haskey(eng_obj, to_key)
+                            eng_obj[to_key] = Vector{Any}(missing, nrw)
+                        end
+                        eng_obj[to_key][w] = defaults["$(fr_key)s"][defaults["wdg$(key_suffix)"]]
+                    end
+                end
+            end
+        end
+
+        # mintap, maxtap
+        for (fr_key, to_key) in zip(["mintap", "maxtap"], ["tm_min", "tm_max"])
+            if isempty(defaults["xfmrcode"]) || (haskey(dss_obj, fr_key) && _is_after_xfmrcode(dss_obj["prop_order"], fr_key))
+                eng_obj[to_key] = fill(fill(defaults[fr_key], nphases), nrw)
+            end
+        end
+
+        # %noloadloss, %imag
+        for (fr_key, to_key) in zip(["%noloadloss", "%imag"], ["noloadloss", "imag"])
+            if isempty(defaults["xfmrcode"]) || (haskey(dss_obj, fr_key) && _is_after_xfmrcode(dss_obj["prop_order"], fr_key))
+                eng_obj[to_key] = defaults[fr_key] / 100
+            end
+        end
+
+        # %rs
+        if isempty(defaults["xfmrcode"]) || (haskey(dss_obj, "%rs") && _is_after_xfmrcode(dss_obj["prop_order"], "%rs")) || all(haskey(dss_obj, k) && _is_after_xfmrcode(dss_obj["prop_order"], k) for k in ["%r", "%r_2", "%r_3"])
+            eng_obj["rs"] = defaults["%rs"] / 100
+        else
+            for (w, key_suffix) in enumerate(["", "_2", "_3"])
+                if haskey(dss_obj, "%r$(key_suffix)") && _is_after_xfmrcode(dss_obj["prop_order"], "%r$(key_suffix)")
+                    if !haskey(eng_obj, "rs")
+                        eng_obj["rs"] = Vector{Any}(missing, nrw)
+                    end
+                    eng_obj["rs"][w] = defaults["%rs"][defaults["wdg$(key_suffix)"]] / 100
+                end
+            end
+        end
+
+        # loss model (converted to SI units, referred to secondary)
+        if nrw == 2
+            if isempty(defaults["xfmrcode"]) || (haskey(dss_obj, "xhl") && _is_after_xfmrcode(dss_obj["prop_order"], "xhl"))
+                eng_obj["xsc"] = [defaults["xhl"]] / 100
+            end
+        elseif nrw == 3
+            for (w, key) in enumerate(["xhl", "xht", "xlt"])
+                if isempty(defaults["xfmrcode"]) || (haskey(dss_obj, key) && _is_after_xfmrcode(dss_obj["prop_order"], key))
+                    if !haskey(eng_obj, "xsc")
+                        eng_obj["xsc"] = Vector{Any}(missing, 3)
+                    end
+                    eng_obj["xsc"][w] = defaults[key] / 100
+                end
+            end
+        end
+
+        # tm_fix, tm_step don't appear in opendss
+        if isempty(defaults["xfmrcode"])
+            eng_obj["tm_fix"] = [fill(1, nphases) for w in 1:nrw]
+            eng_obj["tm_step"] = fill(fill(1/32, nphases), nrw)
+            eng_obj["fixed"] = fill(1, nrw)
+        end
+
+        # always required
+        eng_obj["bus"] = Array{String, 1}(undef, nrw)
+        eng_obj["connections"] = Array{Array{Int, 1}, 1}(undef, nrw)
+        eng_obj["polarity"] = fill(1, nrw)
+
+
+        if !haskey(dss_obj, "xfmrcode")
+            eng_obj["configuration"] = confs
         end
 
         # test if this transformer conforms with limitations
         if nphases<3 && "delta" in confs
-            Memento.error("Transformers with delta windings should have at least 3 phases to be well-defined: $name.")
+            Memento.error(_LOGGER, "Transformers with delta windings should have at least 3 phases to be well-defined: $name.")
         end
         if nrw>3
             # All of the code is compatible with any number of windings,
             # except for the parsing of the loss model (the pair-wise reactance)
             Memento.error(_LOGGER, "For now parsing of xscarray is not supported. At most 3 windings are allowed, not $nrw.")
         end
-
-        if haskey(dss_obj, "taps")
-            eng_obj["tm"] = [fill(defaults["taps"][w], nphases) for w in 1:nrw]
-        else
-            eng_obj["tm"] = [fill(1.0, nphases) for w in 1:nrw]
-        end
-        eng_obj["fixed"] = [fill(true, nphases) for w in 1:nrw]
-
-        eng_obj["bus"] = Array{String, 1}(undef, nrw)
-        eng_obj["connections"] = Array{Array{Int, 1}, 1}(undef, nrw)
-        eng_obj["polarity"] = fill(1, nrw)
-        eng_obj["leadlag"] = defaults["leadlag"] #TODO import from xfmrcode or not? yes I guess
 
         for w in 1:nrw
             eng_obj["bus"][w] = _parse_busname(defaults["buses"][w])[1]
@@ -666,7 +692,7 @@ function _dss2eng_transformer!(data_eng::Dict{String,<:Any}, data_dss::Dict{Stri
 
             if w>1
                 prim_conf = confs[1]
-                if defaults["leadlag"] in ["ansi", "lag"]
+                if leadlag in ["ansi", "lag"]
                     if prim_conf=="delta" && conf=="wye"
                         eng_obj["polarity"][w] = -1
                         eng_obj["connections"][w] = [_barrel_roll(eng_obj["connections"][w][1:end-1], 1)..., eng_obj["connections"][w][end]]
@@ -680,13 +706,11 @@ function _dss2eng_transformer!(data_eng::Dict{String,<:Any}, data_dss::Dict{Stri
             end
         end
 
-        eng_obj["source_id"] = "transformer.$(name)"
-
-        if !isempty(defaults["bank"])
-            eng_obj["bank"] = defaults["bank"]
+        for key in ["bank", "xfmrcode"]
+            if !isempty(defaults[key])
+                eng_obj[key] = defaults[key]
+            end
         end
-
-        eng_obj = create_transformer(; Dict(Symbol.(keys(eng_obj)).=>values(eng_obj))...)
 
         if !haskey(data_eng, "transformer")
             data_eng["transformer"] = Dict{String,Any}()
@@ -749,38 +773,33 @@ function _dss2eng_storage!(data_eng::Dict{String,<:Any}, data_dss::Dict{String,<
         _apply_like!(dss_obj, data_dss, "storage")
         defaults = _apply_ordered_properties(_create_storage(name; _to_kwargs(dss_obj)...), dss_obj)
 
-        eng_obj = Dict{String,Any}()
-
         nphases = defaults["phases"]
-        eng_obj["connections"] = _get_conductors_ordered(defaults["bus1"], check_length=false)
 
-        eng_obj["name"] = name
-        eng_obj["bus"] = _parse_busname(defaults["bus1"])[1]
+        eng_obj = Dict{String,Any}(
+            "bus" => _parse_busname(defaults["bus1"])[1],
+            "connections" => _get_conductors_ordered(defaults["bus1"], check_length=false),
+            "configuration" => "wye",
+            "energy" => defaults["kwhstored"],
+            "energy_ub" => defaults["kwrated"],
+            "charge_ub" => defaults["%charge"] / 100.0 * defaults["kwrated"],
+            "discharge_ub" => defaults["%discharge"] / 100.0 * defaults["kwrated"],
+            "cm_ub" => fill(defaults["kva"] / nphases, nphases),
+            "charge_efficiency" => defaults["%effcharge"],
+            "discharge_efficiency" => defaults["%effdischarge"],
+            "qs_lb" => -fill(defaults["kvar"] / nphases, nphases),
+            "qs_ub" =>  fill(defaults["kvar"] / nphases, nphases),
+            "rs" => fill(defaults["%r"] / nphases / 100.0, nphases),
+            "xs" => fill(defaults["%x"] / nphases / 100.0, nphases),
+            "pex" => defaults["%idlingkw"] .* defaults["kwrated"],
+            "qex" => defaults["%idlingkvar"] .* defaults["kvar"],
+            "status" => convert(Int, defaults["enabled"]),
+            "source_id" => "storage.$(name)",
+        )
 
         # if the ground is used directly, register load
         if 0 in eng_obj["connections"]
             _register_awaiting_ground!(data_eng["bus"][eng_obj["bus"]], eng_obj["connections"])
         end
-
-        eng_obj["kwhstored"] = defaults["kwhstored"]
-        eng_obj["kwhrated"] = defaults["kwhrated"]
-        eng_obj["kwrated"] = defaults["kwrated"]
-
-        eng_obj["%charge"] = defaults["%charge"]
-        eng_obj["%discharge"] = defaults["%discharge"]
-        eng_obj["%effcharge"] = defaults["%effcharge"]
-        eng_obj["%effdischarge"] = defaults["%effdischarge"]
-        eng_obj["kva"] = fill(defaults["kva"] / nphases, nphases)
-        eng_obj["kvar"] = fill(defaults["kvar"] / nphases, nphases)
-        eng_obj["%r"] = fill(defaults["%r"] / nphases, nphases)
-        eng_obj["%x"] = fill(defaults["%x"] / nphases, nphases)
-        eng_obj["%idlingkw"] = defaults["%idlingkw"]
-        eng_obj["%idlingkvar"] = defaults["%idlingkvar"]
-
-        eng_obj["status"] = convert(Int, defaults["enabled"])
-
-
-        eng_obj["source_id"] = "storage.$(name)"
 
         if import_all
             _import_all(eng_obj, defaults, dss_obj["prop_order"])

@@ -1,8 +1,18 @@
-const _dimensionalize_math = Dict(
-    "bus"  => Dict("rad2deg"=>["va"], "vbase"=>["vm", "vr", "vi"]),
-    "gen"  => Dict("sbase"=>["pg", "qg", "pg_bus", "qg_bus"]),
-    "load" => Dict("sbase"=>["pd", "qd", "pd_bus", "qd_bus"]),
-    "line" => Dict("sbase"=>["pf", "qf", "pt", "qt"]),
+"lists of scaling factors and what they apply to"
+const _dimensionalize_math = Dict{String,Dict{String,Vector{String}}}(
+    "bus"  => Dict{String,Vector{String}}(
+        "rad2deg"=>Vector{String}(["va"]),
+        "vbase"=>Vector{String}(["vm", "vr", "vi"])
+    ),
+    "gen"  => Dict{String,Vector{String}}(
+        "sbase"=>Vector{String}(["pg", "qg", "pg_bus", "qg_bus"])
+    ),
+    "load" => Dict{String,Vector{String}}(
+        "sbase"=>Vector{String}(["pd", "qd", "pd_bus", "qd_bus"])
+    ),
+    "line" => Dict{String,Vector{String}}(
+        "sbase"=>Vector{String}(["pf", "qf", "pt", "qt"])
+    ),
 )
 
 
@@ -33,7 +43,7 @@ end
 
 
 "finds voltage zones"
-function _find_zones(data_model)
+function _find_zones(data_model::Dict{String,<:Any})
     unused_line_ids = Set(keys(data_model["branch"]))
     bus_lines = Dict([(id,Set()) for id in keys(data_model["bus"])])
     for (line_id,line) in data_model["branch"]
@@ -67,7 +77,7 @@ end
 
 
 "calculates voltage bases for each voltage zone"
-function _calc_vbase(data_model, vbase_sources::Dict{String,<:Real})
+function _calc_vbase(data_model::Dict{String,<:Any}, vbase_sources::Dict{String,<:Real})
     # find zones of buses connected by lines
     zones = _find_zones(data_model)
     bus_to_zone = Dict([(bus,zone) for (zone, buses) in zones for bus in buses])
@@ -76,7 +86,7 @@ function _calc_vbase(data_model, vbase_sources::Dict{String,<:Real})
     zone_vbase = Dict{Int, Union{Missing,Real}}([(zone,missing) for zone in keys(zones)])
     for (bus,vbase) in vbase_sources
         if !ismissing(zone_vbase[bus_to_zone[bus]])
-            Memento.warn("You supplied multiple voltage bases for the same zone; ignoring all but the last one.")
+            Memento.warn(_LOGGER, "You supplied multiple voltage bases for the same zone; ignoring all but the last one.")
         end
         zone_vbase[bus_to_zone[bus]] = vbase
     end
@@ -84,11 +94,11 @@ function _calc_vbase(data_model, vbase_sources::Dict{String,<:Real})
     # transformers form the edges between these zones
     zone_edges = Dict([(zone,[]) for zone in keys(zones)])
     edges = Set()
-    for (i,(_,trans)) in enumerate(data_model["transformer"])
+    for (i,(_,transformer)) in enumerate(get(data_model, "transformer", Dict{Any,Dict{String,Any}}()))
         push!(edges,i)
-        f_zone = bus_to_zone[string(trans["f_bus"])]
-        t_zone = bus_to_zone[string(trans["t_bus"])]
-        tm_nom = trans["configuration"]=="delta" ? trans["tm_nom"]/sqrt(3) : trans["tm_nom"]
+        f_zone = bus_to_zone[string(transformer["f_bus"])]
+        t_zone = bus_to_zone[string(transformer["t_bus"])]
+        tm_nom = transformer["configuration"]=="delta" ? transformer["tm_nom"]/sqrt(3) : transformer["tm_nom"]
         push!(zone_edges[f_zone], (i, t_zone, 1/tm_nom))
         push!(zone_edges[t_zone], (i, f_zone, tm_nom))
     end
@@ -97,7 +107,6 @@ function _calc_vbase(data_model, vbase_sources::Dict{String,<:Real})
     stack = [zone for (zone,vbase) in zone_vbase if !ismissing(vbase)]
 
     while !isempty(stack)
-
         zone = pop!(stack)
 
         for (edge_id, zone_to, scale) in zone_edges[zone]
@@ -117,9 +126,7 @@ end
 
 
 "converts to per unit from SI"
-function _make_math_per_unit!(data_model; settings=missing, sbase=1.0, vbases=missing, v_var_scalar=missing)
-
-
+function _make_math_per_unit!(data_model::Dict{String,<:Any}; settings::Union{Missing,Dict{String,<:Any}}=missing, sbase::Union{Real,Missing}=1.0, vbases::Union{Dict{String,<:Real},Missing}=missing, v_var_scalar::Union{Missing,Real}=missing)
     if ismissing(sbase)
         if !ismissing(settings) && haskey(settings, "set_sbase")
             sbase = settings["set_sbase"]
@@ -196,7 +203,7 @@ end
 
 
 "per-unit conversion for buses"
-function _rebase_pu_bus!(bus, vbase, sbase, sbase_old, v_var_scalar)
+function _rebase_pu_bus!(bus::Dict{String,<:Any}, vbase::Real, sbase::Real, sbase_old::Real, v_var_scalar::Real)
     # if not in p.u., these are normalized with respect to vnom
     prop_vnom = ["vm", "vmax", "vmin", "vm_set", "vm_ln_min", "vm_ln_max", "vm_lg_min", "vm_lg_max", "vm_ng_min", "vm_ng_max", "vm_ll_min", "vm_ll_max"]
 
@@ -221,7 +228,6 @@ function _rebase_pu_bus!(bus, vbase, sbase, sbase_old, v_var_scalar)
     z_scale = z_old/z_new
     _scale_props!(bus, ["rg", "xg"], z_scale)
 
-    # TODO fix
     if haskey(bus ,"va")
         bus["va"] = deg2rad.(bus["va"])
     end
@@ -232,7 +238,7 @@ end
 
 
 "per-unit conversion for branches"
-function _rebase_pu_branch!(branch, vbase, sbase, sbase_old, v_var_scalar)
+function _rebase_pu_branch!(branch::Dict{String,<:Any}, vbase::Real, sbase::Real, sbase_old::Real, v_var_scalar::Real)
     if !haskey(branch, "vbase")
         z_old = 1
     else
@@ -255,7 +261,7 @@ end
 
 
 "per-unit conversion for shunts"
-function _rebase_pu_shunt!(shunt, vbase, sbase, sbase_old, v_var_scalar)
+function _rebase_pu_shunt!(shunt::Dict{String,<:Any}, vbase::Real, sbase::Real, sbase_old::Real, v_var_scalar::Real)
     if !haskey(shunt, "vbase")
         z_old = 1
     else
@@ -267,8 +273,8 @@ function _rebase_pu_shunt!(shunt, vbase, sbase, sbase_old, v_var_scalar)
 
     z_scale = z_old/z_new
     y_scale = 1/z_scale
-    scale(shunt, "gs", y_scale)
-    scale(shunt, "bs", y_scale)
+    _scale(shunt, "gs", y_scale)
+    _scale(shunt, "bs", y_scale)
 
     # save new vbase
     shunt["vbase"] = vbase
@@ -276,7 +282,7 @@ end
 
 
 "per-unit conversion for loads"
-function _rebase_pu_load!(load, vbase, sbase, sbase_old, v_var_scalar)
+function _rebase_pu_load!(load::Dict{String,<:Any}, vbase::Real, sbase::Real, sbase_old::Real, v_var_scalar::Real)
     if !haskey(load, "vbase")
         vbase_old = 1
         sbase_old = 1
@@ -286,11 +292,11 @@ function _rebase_pu_load!(load, vbase, sbase, sbase_old, v_var_scalar)
 
     vbase_old = get(load, "vbase", 1.0)
     vbase_scale = vbase_old/vbase
-    scale(load, "vnom_kv", vbase_scale)
+    _scale(load, "vnom_kv", vbase_scale)
 
     sbase_scale = sbase_old/sbase
-    scale(load, "pd", sbase_scale)
-    scale(load, "qd", sbase_scale)
+    _scale(load, "pd", sbase_scale)
+    _scale(load, "qd", sbase_scale)
 
     # save new vbase
     load["vbase"] = vbase
@@ -298,13 +304,13 @@ end
 
 
 "per-unit conversion for generators"
-function _rebase_pu_generator!(gen, vbase, sbase, sbase_old, v_var_scalar, data_model)
+function _rebase_pu_generator!(gen::Dict{String,<:Any}, vbase::Real, sbase::Real, sbase_old::Real, v_var_scalar::Real, data_model::Dict{String,<:Any})
     vbase_old = get(gen, "vbase", 1.0/v_var_scalar)
     vbase_scale = vbase_old/vbase
     sbase_scale = sbase_old/sbase
 
     for key in ["pg", "qg", "pmin", "qmin", "pmax", "qmax"]
-        scale(gen, key, sbase_scale)
+        _scale(gen, key, sbase_scale)
     end
 
     # if not in per unit yet, the cost has is in $/MWh
@@ -323,22 +329,22 @@ end
 
 
 "per-unit conversion for ideal 2-winding transformers"
-function _rebase_pu_transformer_2w_ideal!(trans, f_vbase_new, t_vbase_new, sbase_old, sbase_new, v_var_scalar)
-    f_vbase_old = get(trans, "f_vbase", 1.0)
-    t_vbase_old = get(trans, "t_vbase", 1.0)
+function _rebase_pu_transformer_2w_ideal!(transformer::Dict{String,<:Any}, f_vbase_new::Real, t_vbase_new::Real, sbase_old::Real, sbase_new::Real, v_var_scalar::Real)
+    f_vbase_old = get(transformer, "f_vbase", 1.0)
+    t_vbase_old = get(transformer, "t_vbase", 1.0)
     f_vbase_scale = f_vbase_old/f_vbase_new
     t_vbase_scale = t_vbase_old/t_vbase_new
 
-    scale(trans, "tm_nom", f_vbase_scale/t_vbase_scale)
+    _scale(transformer, "tm_nom", f_vbase_scale/t_vbase_scale)
 
     # save new vbase
-    trans["f_vbase"] = f_vbase_new
-    trans["t_vbase"] = t_vbase_new
+    transformer["f_vbase"] = f_vbase_new
+    transformer["t_vbase"] = t_vbase_new
 end
 
 
 "helper function to apply a scale factor to given properties"
-function _scale_props!(comp::Dict{String, Any}, prop_names::Array{String, 1}, scale::Real)
+function _scale_props!(comp::Dict{String,<:Any}, prop_names::Vector{String}, scale::Real)
     for name in prop_names
         if haskey(comp, name)
             comp[name] *= scale
@@ -347,21 +353,19 @@ function _scale_props!(comp::Dict{String, Any}, prop_names::Array{String, 1}, sc
 end
 
 
-""
-function add_big_M!(data_model; kwargs...)
-    big_M = Dict{String, Any}()
-
-    big_M["v_phase_pu_min"] = add_kwarg!(big_M, kwargs, :v_phase_pu_min, 0.5)
-    big_M["v_phase_pu_max"] = add_kwarg!(big_M, kwargs, :v_phase_pu_max, 2.0)
-    big_M["v_neutral_pu_min"] = add_kwarg!(big_M, kwargs, :v_neutral_pu_min, 0.0)
-    big_M["v_neutral_pu_max"] = add_kwarg!(big_M, kwargs, :v_neutral_pu_max, 0.5)
-
-    data_model["big_M"] = big_M
+"adds big M to data model"
+function add_big_M!(data_model::Dict{String,<:Any}; kwargs...)
+    data_model["big_M"] = Dict{String, Any}(
+        "v_phase_pu_lb" => get(kwargs, :v_phase_pu_lb, 0.5),
+        "v_phase_pu_ub" => get(kwargs, :v_phase_pu_ub, 2.0),
+        "v_neutral_pu_lb" => get(kwargs, :v_neutral_pu_lb, 0.0),
+        "v_neutral_pu_ub" => get(kwargs, :v_neutral_pu_ub, 0.5)
+    )
 end
 
 
-""
-function solution_make_si(solution, math_model; mult_sbase=true, mult_vbase=true, convert_rad2deg=true)
+"converts solution to si units"
+function solution_make_si(solution::Dict{String,<:Any}, math_model::Dict{String,<:Any}; mult_sbase::Bool=true, mult_vbase::Bool=true, convert_rad2deg::Bool=true)::Dict{String,Any}
     solution_si = deepcopy(solution)
 
     sbase = math_model["sbase"]
